@@ -1,0 +1,1450 @@
+"use client";
+import React, { useState, useEffect } from 'react';
+import { Plus, Filter, Folder, Calendar, Clock, Users, CheckCircle, Circle, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square } from 'lucide-react';
+
+// Utility functions
+const generateId = () => Math.random().toString(36).substr(2, 9);
+const formatDate = (timestamp) => {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+
+const formatDateShort = (timestamp) => {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  return date.toLocaleDateString();
+};
+
+// Initial data structure
+const initialData = {
+  projects: [],
+  people: [],
+  sessions: [],
+  noteTypes: [
+    { id: 'note', name: 'Note', isSystem: true },
+    { id: 'to_do', name: 'To Do', isSystem: true },
+    { id: 'deliverable', name: 'Deliverable', isSystem: true }
+  ],
+  notes: [],
+  comments: [],
+  settings: {
+    apiKey: '',
+    autoAnalyze: true
+  }
+};
+
+export default function TaskTracker() {
+  const [data, setData] = useState(initialData);
+  const [quickEntry, setQuickEntry] = useState('');
+  const [selectedProject, setSelectedProject] = useState(null);
+  const [activeSession, setActiveSession] = useState(null);
+  const [filterBy, setFilterBy] = useState('all');
+  const [groupBy, setGroupBy] = useState('none');
+  const [showProjectModal, setShowProjectModal] = useState(false);
+  const [showSessionModal, setShowSessionModal] = useState(false);
+  const [showNoteModal, setShowNoteModal] = useState(false);
+  const [editingNote, setEditingNote] = useState(null);
+  const [expandedNotes, setExpandedNotes] = useState(new Set());
+  const [showComments, setShowComments] = useState(new Set());
+  // const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showProjectAutocomplete, setShowProjectAutocomplete] = useState(false);
+  const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = useState(0);
+  const [appliedTags, setAppliedTags] = useState({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
+
+  // Load data from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('taskTrackerData');
+    if (saved) {
+      const loadedData = JSON.parse(saved);
+      setData(loadedData);
+      
+      // Check for active session
+      const active = loadedData.sessions.find(s => s.isActive);
+      if (active) {
+        setActiveSession(active);
+        setSelectedProject(active.projectId);
+      }
+    }
+  }, []);
+
+  // Save data to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('taskTrackerData', JSON.stringify(data));
+  }, [data]);
+
+  // AI Analysis - Commented out for now
+  /*
+  const analyzeWithAI = async (content) => {
+    if (!data.settings.apiKey) {
+      alert('Please set your Anthropic API key in Settings');
+      return null;
+    }
+
+    setIsAnalyzing(true);
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': data.settings.apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          messages: [{
+            role: 'user',
+            content: `Analyze this note and extract structured information. Return ONLY a JSON object with no additional text.
+
+Note: "${content}"
+
+Return JSON with these fields:
+{
+  "type": "note" | "to_do" | "deliverable",
+  "isUrgent": true | false,
+  "dueDate": "YYYY-MM-DD" or null,
+  "suggestedContent": "improved version of the note if needed, otherwise same as input"
+}
+
+Rules:
+- Use "to_do" if it's an action item or task
+- Use "deliverable" if it's something to be produced/delivered
+- Use "note" for information, observations, or general notes
+- Mark as urgent if there are words like "urgent", "asap", "critical", "emergency"
+- Extract due dates from phrases like "by Friday", "tomorrow", "next week", "in 3 days"
+- Today is ${new Date().toISOString().split('T')[0]}
+- If no clear due date, return null
+- Keep the content largely the same unless there are obvious improvements`
+          }]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const result = await response.json();
+      const content_text = result.content[0].text;
+      
+      // Extract JSON from the response (handling potential markdown code blocks)
+      let jsonStr = content_text.trim();
+      if (jsonStr.startsWith('```json')) {
+        jsonStr = jsonStr.replace(/```json\n?/, '').replace(/```$/, '').trim();
+      } else if (jsonStr.startsWith('```')) {
+        jsonStr = jsonStr.replace(/```\n?/, '').replace(/```$/, '').trim();
+      }
+      
+      const analysis = JSON.parse(jsonStr);
+      
+      return {
+        type: analysis.type || 'note',
+        isUrgent: analysis.isUrgent || false,
+        dueDate: analysis.dueDate ? new Date(analysis.dueDate).getTime() : null,
+        content: analysis.suggestedContent || content
+      };
+    } catch (error) {
+      console.error('AI analysis error:', error);
+      alert('Failed to analyze note with AI. Check console for details.');
+      return null;
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+  */
+
+  // Parse tags from note content
+  const parseTags = (text) => {
+    const tags = {
+      type: 'note',
+      isUrgent: false,
+      dueDate: null,
+      projectId: null,
+      content: text
+    };
+
+    // Extract tags
+    const tagPattern = /\/([a-z])(?:\s+([^\/]+?))?(?=\s*\/|$)/gi;
+    let cleanContent = text;
+    let match;
+    const matches = [];
+    
+    while ((match = tagPattern.exec(text)) !== null) {
+      matches.push(match);
+    }
+
+    // Process tags
+    matches.forEach(match => {
+      const tag = match[1].toLowerCase();
+      const value = match[2]?.trim();
+
+      switch(tag) {
+        case 'a':
+          tags.type = 'to_do';
+          cleanContent = cleanContent.replace(match[0], '').trim();
+          break;
+        case 'd':
+          if (value) {
+            // Check if it's a number (with optional "days" word)
+            const daysMatch = value.match(/^(\d+)\s*(?:days?)?$/i);
+            if (daysMatch) {
+              // /d n or /d n days - set due date
+              const days = parseInt(daysMatch[1]);
+              tags.dueDate = Date.now() + (days * 24 * 60 * 60 * 1000);
+              cleanContent = cleanContent.replace(match[0], '').trim();
+            } else {
+              // /d with non-numeric value - treat as deliverable
+              tags.type = 'deliverable';
+              cleanContent = cleanContent.replace(match[0], '').trim();
+            }
+          } else {
+            // /d alone - deliverable
+            tags.type = 'deliverable';
+            cleanContent = cleanContent.replace(match[0], '').trim();
+          }
+          break;
+        case 'n':
+          tags.type = 'note';
+          cleanContent = cleanContent.replace(match[0], '').trim();
+          break;
+        case 'u':
+          tags.isUrgent = true;
+          cleanContent = cleanContent.replace(match[0], '').trim();
+          break;
+        case 'p':
+          if (value) {
+            // Find project by name
+            const project = data.projects.find(p => 
+              p.name.toLowerCase() === value.toLowerCase()
+            );
+            if (project) {
+              tags.projectId = project.id;
+            }
+            cleanContent = cleanContent.replace(match[0], '').trim();
+          }
+          break;
+      }
+    });
+
+    tags.content = cleanContent.trim();
+    return tags;
+  };
+
+  // Handle project autocomplete
+  const handleQuickEntryChange = (value) => {
+    let newText = value;
+    let newTags = { ...appliedTags };
+    let textChanged = false;
+    
+    // Check for /a (action/to_do) tag
+    if (/\/a(?:\s|$|\/)/i.test(newText)) {
+      newTags.type = 'to_do';
+      newText = newText.replace(/\/a(?=\s|$|\/)/gi, '').trim();
+      textChanged = true;
+    }
+    
+    // Check for /n (note) tag
+    if (/\/n(?:\s|$|\/)/i.test(newText)) {
+      newTags.type = 'note';
+      newText = newText.replace(/\/n(?=\s|$|\/)/gi, '').trim();
+      textChanged = true;
+    }
+    
+    // Check for /u (urgent) tag
+    if (/\/u(?:\s|$|\/)/i.test(newText)) {
+      newTags.isUrgent = true;
+      newText = newText.replace(/\/u(?=\s|$|\/)/gi, '').trim();
+      textChanged = true;
+    }
+    
+    // Check for /d followed by number (due date)
+    const dueDateMatch = newText.match(/\/d\s+(\d+)\s*(?:days?)?(?=\s|$|\/)/i);
+    if (dueDateMatch) {
+      const days = parseInt(dueDateMatch[1]);
+      newTags.dueDate = Date.now() + (days * 24 * 60 * 60 * 1000);
+      newText = newText.replace(/\/d\s+\d+\s*(?:days?)?(?=\s|$|\/)/i, '').trim();
+      textChanged = true;
+    } else if (/\/d(?!\s*\d)(?=\s|$|\/)/i.test(newText)) {
+      // /d without number = deliverable
+      newTags.type = 'deliverable';
+      newText = newText.replace(/\/d(?!\s*\d)(?=\s|$|\/)/i, '').trim();
+      textChanged = true;
+    }
+    
+    // Only clean up multiple spaces if we changed the text
+    if (textChanged) {
+      newText = newText.replace(/\s+/g, ' ').trim();
+      setQuickEntry(newText);
+      setAppliedTags(newTags);
+    } else {
+      // No tags detected, just update the text as-is
+      setQuickEntry(value);
+    }
+    
+    // Check for /p tag (don't auto-apply, just show autocomplete)
+    // Only check if we don't have the /p in the cleaned text from tag removal
+    const pTagMatch = value.match(/\/p(?:\s+(.+?))?$/i);
+    if (pTagMatch && !textChanged) {
+      setShowProjectAutocomplete(true);
+      // Reset to first item when autocomplete opens or text changes
+      setSelectedAutocompleteIndex(0);
+    } else {
+      setShowProjectAutocomplete(false);
+    }
+  };
+
+  // Get filtered projects for autocomplete
+  const getFilteredProjects = () => {
+    const pMatch = quickEntry.match(/\/p\s+(.+?)$/i);
+    const searchTerm = pMatch ? pMatch[1] : '';
+    return data.projects.filter(p => 
+      p.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  };
+
+  // Handle keydown in quick entry
+  const handleQuickEntryKeyDown = (e) => {
+    if (showProjectAutocomplete) {
+      const filteredProjects = getFilteredProjects();
+      
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedAutocompleteIndex(prev => 
+          prev < filteredProjects.length ? prev + 1 : prev
+        );
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedAutocompleteIndex(prev => 
+          prev > 0 ? prev - 1 : 0
+        );
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        
+        // Extract the project name from the text (everything after /p)
+        const projectNameMatch = quickEntry.match(/\/p\s+(.+?)$/i);
+        
+        if (selectedAutocompleteIndex < filteredProjects.length) {
+          // A project from the list is highlighted - select it
+          applyProjectTag(filteredProjects[selectedAutocompleteIndex]);
+        } else if (projectNameMatch && projectNameMatch[1].trim()) {
+          // No project selected, but there's text after /p - create new project
+          const newProjectName = projectNameMatch[1].trim();
+          createAndApplyNewProject(newProjectName);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowProjectAutocomplete(false);
+      }
+    } else if (e.key === 'Enter') {
+      handleQuickAdd();
+      e.preventDefault();
+    }
+  };
+
+  // Apply project tag and remove /p text
+  const applyProjectTag = (project) => {
+    // Remove /p and everything after it (handle with or without space/text after)
+    const newText = quickEntry.replace(/\/p(?:\s+.*)?$/i, '').trim();
+    setQuickEntry(newText);
+    setAppliedTags(prev => ({ ...prev, projectId: project.id }));
+    setShowProjectAutocomplete(false);
+  };
+
+  // Create new project and apply tag
+  const createAndApplyNewProject = (name) => {
+    const newProject = {
+      id: generateId(),
+      name,
+      details: '',
+      customProperties: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    setData(prev => ({
+      ...prev,
+      projects: [...prev.projects, newProject]
+    }));
+    applyProjectTag(newProject);
+  };
+
+  // Remove a tag from applied tags
+  const removeTag = (tagType) => {
+    const newTags = { ...appliedTags };
+    
+    switch(tagType) {
+      case 'type':
+        newTags.type = 'note';
+        break;
+      case 'urgent':
+        newTags.isUrgent = false;
+        break;
+      case 'dueDate':
+        newTags.dueDate = null;
+        break;
+      case 'project':
+        newTags.projectId = null;
+        break;
+    }
+    
+    setAppliedTags(newTags);
+  };
+
+  // Quick add note with applied tags
+  const handleQuickAdd = () => {
+    if (!quickEntry.trim()) return;
+    
+    const newNote = {
+      id: generateId(),
+      projectId: appliedTags.projectId || selectedProject,
+      sessionId: activeSession?.id || null,
+      parentId: null,
+      type: appliedTags.type,
+      content: quickEntry.trim(),
+      dueDate: appliedTags.dueDate,
+      status: appliedTags.type === 'to_do' ? 'not_started' : null,
+      isUrgent: appliedTags.isUrgent,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    
+    setData(prev => ({
+      ...prev,
+      notes: [...prev.notes, newNote]
+    }));
+    setQuickEntry('');
+    setShowProjectAutocomplete(false);
+    setAppliedTags({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
+  };
+
+  // Add project
+  const addProject = (name, details) => {
+    const newProject = {
+      id: generateId(),
+      name,
+      details,
+      customProperties: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    setData(prev => ({
+      ...prev,
+      projects: [...prev.projects, newProject]
+    }));
+  };
+
+  // Start session
+  const startSession = (projectId, title, type, participantIds) => {
+    // End any active session first
+    if (activeSession) {
+      endSession(activeSession.id);
+    }
+    
+    const newSession = {
+      id: generateId(),
+      projectId,
+      title,
+      type,
+      participants: participantIds,
+      startTime: Date.now(),
+      endTime: null,
+      isActive: true,
+      createdAt: Date.now()
+    };
+    
+    setData(prev => ({
+      ...prev,
+      sessions: [...prev.sessions, newSession]
+    }));
+    setActiveSession(newSession);
+    setSelectedProject(projectId);
+  };
+
+  // End session
+  const endSession = (sessionId) => {
+    setData(prev => ({
+      ...prev,
+      sessions: prev.sessions.map(s => 
+        s.id === sessionId ? { ...s, endTime: Date.now(), isActive: false } : s
+      )
+    }));
+    setActiveSession(null);
+  };
+
+  // Update settings - Commented out for now
+  /*
+  const updateSettings = (newSettings) => {
+    setData(prev => ({
+      ...prev,
+      settings: { ...prev.settings, ...newSettings }
+    }));
+  };
+  */
+
+  // Add/update note
+  const saveNote = (noteData) => {
+    if (editingNote) {
+      setData(prev => ({
+        ...prev,
+        notes: prev.notes.map(n => 
+          n.id === editingNote.id ? { ...n, ...noteData, updatedAt: Date.now() } : n
+        )
+      }));
+      setEditingNote(null);
+    } else {
+      const newNote = {
+        ...noteData,
+        id: generateId(),
+        projectId: selectedProject,
+        sessionId: activeSession?.id || null,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      setData(prev => ({
+        ...prev,
+        notes: [...prev.notes, newNote]
+      }));
+    }
+  };
+
+  // Delete note
+  const deleteNote = (noteId) => {
+    const deleteRecursive = (id) => {
+      const children = data.notes.filter(n => n.parentId === id);
+      children.forEach(child => deleteRecursive(child.id));
+      
+      setData(prev => ({
+        ...prev,
+        notes: prev.notes.filter(n => n.id !== id),
+        comments: prev.comments.filter(c => c.noteId !== id)
+      }));
+    };
+    deleteRecursive(noteId);
+  };
+
+  // Add comment
+  const addComment = (noteId, content) => {
+    const newComment = {
+      id: generateId(),
+      noteId,
+      content,
+      createdAt: Date.now()
+    };
+    setData(prev => ({
+      ...prev,
+      comments: [...prev.comments, newComment]
+    }));
+  };
+
+  // Toggle note expansion
+  const toggleExpanded = (noteId) => {
+    setExpandedNotes(prev => {
+      const next = new Set(prev);
+      if (next.has(noteId)) {
+        next.delete(noteId);
+      } else {
+        next.add(noteId);
+      }
+      return next;
+    });
+  };
+
+  // Filter and group notes
+  const getFilteredNotes = () => {
+    let filtered = data.notes.filter(n => !n.parentId); // Only top-level notes
+    
+    // Apply filters
+    if (filterBy === 'project' && selectedProject) {
+      filtered = filtered.filter(n => n.projectId === selectedProject);
+    } else if (filterBy === 'urgent') {
+      filtered = filtered.filter(n => n.isUrgent);
+    } else if (filterBy === 'due_week') {
+      const weekFromNow = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      filtered = filtered.filter(n => n.dueDate && n.dueDate <= weekFromNow);
+    } else if (filterBy === 'to_do') {
+      filtered = filtered.filter(n => n.type === 'to_do' && n.status !== 'done');
+    }
+    
+    // Sort by creation date (newest first)
+    filtered.sort((a, b) => b.createdAt - a.createdAt);
+    
+    return filtered;
+  };
+
+  // Group notes
+  const getGroupedNotes = () => {
+    const filtered = getFilteredNotes();
+    
+    if (groupBy === 'none') {
+      return { 'All Items': filtered };
+    } else if (groupBy === 'project') {
+      const grouped = {};
+      filtered.forEach(note => {
+        const project = data.projects.find(p => p.id === note.projectId);
+        const key = project ? project.name : 'No Project';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(note);
+      });
+      return grouped;
+    } else if (groupBy === 'type') {
+      const grouped = {};
+      filtered.forEach(note => {
+        const type = data.noteTypes.find(t => t.id === note.type);
+        const key = type ? type.name : 'Unknown';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(note);
+      });
+      return grouped;
+    } else if (groupBy === 'due_date') {
+      const grouped = { 'No Due Date': [], 'Overdue': [], 'This Week': [], 'Later': [] };
+      const now = Date.now();
+      const weekFromNow = now + 7 * 24 * 60 * 60 * 1000;
+      
+      filtered.forEach(note => {
+        if (!note.dueDate) {
+          grouped['No Due Date'].push(note);
+        } else if (note.dueDate < now) {
+          grouped['Overdue'].push(note);
+        } else if (note.dueDate <= weekFromNow) {
+          grouped['This Week'].push(note);
+        } else {
+          grouped['Later'].push(note);
+        }
+      });
+      return grouped;
+    }
+    
+    return { 'All Items': filtered };
+  };
+
+  // Render note recursively
+  const renderNote = (note, depth = 0) => {
+    const project = data.projects.find(p => p.id === note.projectId);
+    const session = data.sessions.find(s => s.id === note.sessionId);
+    const children = data.notes.filter(n => n.parentId === note.id);
+    const noteComments = data.comments.filter(c => c.noteId === note.id);
+    const isExpanded = expandedNotes.has(note.id);
+    const showCommentsSection = showComments.has(note.id);
+    
+    return (
+      <div key={note.id} className="mb-2" style={{ marginLeft: `${depth * 24}px` }}>
+        <div className="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
+          <div className="flex items-start gap-3">
+            {children.length > 0 && (
+              <button onClick={() => toggleExpanded(note.id)} className="mt-1 text-gray-400 hover:text-gray-600">
+                {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              </button>
+            )}
+            
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      note.type === 'to_do' ? 'bg-blue-100 text-blue-700' :
+                      note.type === 'deliverable' ? 'bg-purple-100 text-purple-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {data.noteTypes.find(t => t.id === note.type)?.name}
+                    </span>
+                    
+                    {note.isUrgent && (
+                      <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium flex items-center gap-1">
+                        <AlertCircle size={12} /> Urgent
+                      </span>
+                    )}
+                    
+                    {note.status && (
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                        note.status === 'done' ? 'bg-green-100 text-green-700' :
+                        note.status === 'in_progress' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-600'
+                      }`}>
+                        {note.status === 'not_started' ? 'Not Started' :
+                         note.status === 'in_progress' ? 'In Progress' : 'Done'}
+                      </span>
+                    )}
+                    
+                    {project && (
+                      <span className="text-xs text-gray-500 flex items-center gap-1">
+                        <Folder size={12} /> {project.name}
+                      </span>
+                    )}
+                    
+                    {session && (
+                      <span className="text-xs text-gray-500">in {session.title}</span>
+                    )}
+                  </div>
+                  
+                  <p className="text-gray-800 mb-1">{note.content}</p>
+                  
+                  <div className="flex items-center gap-3 text-xs text-gray-500">
+                    <span>{formatDate(note.createdAt)}</span>
+                    {note.dueDate && (
+                      <span className="flex items-center gap-1">
+                        <Calendar size={12} /> Due: {formatDateShort(note.dueDate)}
+                      </span>
+                    )}
+                    {noteComments.length > 0 && (
+                      <button 
+                        onClick={() => {
+                          const next = new Set(showComments);
+                          if (next.has(note.id)) {
+                            next.delete(note.id);
+                          } else {
+                            next.add(note.id);
+                          }
+                          setShowComments(next);
+                        }}
+                        className="flex items-center gap-1 hover:text-gray-700"
+                      >
+                        <MessageSquare size={12} /> {noteComments.length}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="flex gap-1">
+                  <button 
+                    onClick={() => {
+                      setEditingNote(note);
+                      setShowNoteModal(true);
+                    }}
+                    className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                  <button 
+                    onClick={() => deleteNote(note.id)}
+                    className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+              
+              {showCommentsSection && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <div className="space-y-2 mb-2">
+                    {noteComments.map(comment => (
+                      <div key={comment.id} className="bg-gray-50 rounded p-2">
+                        <p className="text-sm text-gray-700">{comment.content}</p>
+                        <span className="text-xs text-gray-500">{formatDate(comment.createdAt)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <CommentInput noteId={note.id} onAdd={addComment} />
+                </div>
+              )}
+              
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={() => {
+                    setEditingNote({ parentId: note.id, projectId: note.projectId });
+                    setShowNoteModal(true);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                >
+                  <Plus size={12} /> Add sub-item
+                </button>
+                {!showCommentsSection && (
+                  <button
+                    onClick={() => {
+                      const next = new Set(showComments);
+                      next.add(note.id);
+                      setShowComments(next);
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                  >
+                    <MessageSquare size={12} /> Add comment
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {isExpanded && children.length > 0 && (
+          <div className="mt-2">
+            {children.map(child => renderNote(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const groupedNotes = getGroupedNotes();
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <div className="max-w-6xl mx-auto">
+          <h1 className="text-2xl font-bold text-gray-900 mb-4">Task Tracker</h1>
+          
+          {/* Active Session Banner */}
+          {activeSession && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="bg-green-500 rounded-full w-3 h-3 animate-pulse"></div>
+                <div>
+                  <p className="font-medium text-green-900">{activeSession.title}</p>
+                  <p className="text-sm text-green-700">
+                    Started {formatDate(activeSession.startTime)}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => endSession(activeSession.id)}
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+              >
+                <Square size={16} /> End Session
+              </button>
+            </div>
+          )}
+          
+          {/* Quick Entry */}
+          <div className="relative">
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={quickEntry}
+                  onChange={(e) => handleQuickEntryChange(e.target.value)}
+                  onKeyDown={handleQuickEntryKeyDown}
+                  placeholder="Quick add note... (use tags: /a /d /n /u /p)"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                
+                {/* Project Autocomplete */}
+                {showProjectAutocomplete && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+                    {(() => {
+                      const filteredProjects = getFilteredProjects();
+                      return (
+                        <>
+                          {filteredProjects.length > 0 && (
+                            <div className="py-1">
+                              <div className="px-3 py-1 text-xs font-medium text-gray-500 uppercase">Select Project</div>
+                              {filteredProjects.map((project, index) => (
+                                <button
+                                  key={project.id}
+                                  onClick={() => applyProjectTag(project)}
+                                  className={`w-full text-left px-3 py-2 flex items-center gap-2 ${
+                                    index === selectedAutocompleteIndex 
+                                      ? 'bg-blue-100 text-blue-900' 
+                                      : 'hover:bg-blue-50'
+                                  }`}
+                                >
+                                  <Folder size={14} className="text-gray-400" />
+                                  <span>{project.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          <div className="border-t border-gray-200">
+                            <button
+                              onClick={() => {
+                                const projectNameMatch = quickEntry.match(/\/p\s+(.+?)$/i);
+                                if (projectNameMatch && projectNameMatch[1].trim()) {
+                                  createAndApplyNewProject(projectNameMatch[1].trim());
+                                } else {
+                                  setShowProjectModal(true);
+                                  setShowProjectAutocomplete(false);
+                                }
+                              }}
+                              className={`w-full text-left px-3 py-2 flex items-center gap-2 text-blue-600 ${
+                                selectedAutocompleteIndex === filteredProjects.length 
+                                  ? 'bg-blue-100' 
+                                  : 'hover:bg-blue-50'
+                              }`}
+                            >
+                              <Plus size={14} />
+                              <span>
+                                {(() => {
+                                  const match = quickEntry.match(/\/p\s+(.+?)$/i);
+                                  const projectName = match && match[1].trim();
+                                  return projectName 
+                                    ? `Create "${projectName}"` 
+                                    : 'Create new project';
+                                })()}
+                              </span>
+                            </button>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleQuickAdd}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+              >
+                <Plus size={20} /> Add
+              </button>
+            </div>
+            
+            {/* Tag Bubbles */}
+            <div className="mt-2">
+              {/* Help Text - Always visible */}
+              <div className="text-xs text-gray-500 mb-2">
+                Tags: <span className="font-mono bg-gray-100 px-1 rounded">/a</span> action, 
+                <span className="font-mono bg-gray-100 px-1 rounded ml-1">/d</span> deliverable, 
+                <span className="font-mono bg-gray-100 px-1 rounded ml-1">/n</span> note, 
+                <span className="font-mono bg-gray-100 px-1 rounded ml-1">/u</span> urgent, 
+                <span className="font-mono bg-gray-100 px-1 rounded ml-1">/d 3</span> due in 3 days, 
+                <span className="font-mono bg-gray-100 px-1 rounded ml-1">/p</span> project
+              </div>
+              
+              {/* Applied Tags Bubbles */}
+              {(appliedTags.type !== 'note' || appliedTags.isUrgent || appliedTags.dueDate || appliedTags.projectId) && (
+                <div className="flex flex-wrap gap-2 items-center">
+                  {/* Type Tag */}
+                  {appliedTags.type !== 'note' && (
+                    <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">
+                      <span className="font-medium">
+                        {appliedTags.type === 'to_do' ? 'To Do' : 'Deliverable'}
+                      </span>
+                      <button
+                        onClick={() => removeTag('type')}
+                        className="hover:bg-blue-200 rounded-full p-0.5"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Urgent Tag */}
+                  {appliedTags.isUrgent && (
+                    <div className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs">
+                      <AlertCircle size={12} />
+                      <span className="font-medium">Urgent</span>
+                      <button
+                        onClick={() => removeTag('urgent')}
+                        className="hover:bg-red-200 rounded-full p-0.5"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Due Date Tag */}
+                  {appliedTags.dueDate && (
+                    <div className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs">
+                      <Calendar size={12} />
+                      <span className="font-medium">Due: {formatDateShort(appliedTags.dueDate)}</span>
+                      <button
+                        onClick={() => removeTag('dueDate')}
+                        className="hover:bg-purple-200 rounded-full p-0.5"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Project Tag */}
+                  {appliedTags.projectId && (
+                    <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">
+                      <Folder size={12} />
+                      <span className="font-medium">
+                        {data.projects.find(p => p.id === appliedTags.projectId)?.name}
+                      </span>
+                      <button
+                        onClick={() => removeTag('project')}
+                        className="hover:bg-green-200 rounded-full p-0.5"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          
+          {/* Action Bar */}
+          <div className="flex gap-2 mt-4 flex-wrap">
+            <button
+              onClick={() => setShowProjectModal(true)}
+              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
+            >
+              <Folder size={16} /> New Project
+            </button>
+            <button
+              onClick={() => setShowSessionModal(true)}
+              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
+            >
+              <Play size={16} /> Start Session
+            </button>
+            <button
+              onClick={() => {
+                setEditingNote(null);
+                setShowNoteModal(true);
+              }}
+              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
+            >
+              <Plus size={16} /> New Item
+            </button>
+            
+            <div className="flex gap-2 ml-auto">
+              <select
+                value={filterBy}
+                onChange={(e) => setFilterBy(e.target.value)}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Items</option>
+                <option value="project">Current Project</option>
+                <option value="urgent">Urgent</option>
+                <option value="due_week">Due This Week</option>
+                <option value="to_do">Active To-Dos</option>
+              </select>
+              
+              <select
+                value={groupBy}
+                onChange={(e) => setGroupBy(e.target.value)}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="none">No Grouping</option>
+                <option value="project">Group by Project</option>
+                <option value="type">Group by Type</option>
+                <option value="due_date">Group by Due Date</option>
+              </select>
+              
+              {data.projects.length > 0 && (
+                <select
+                  value={selectedProject || ''}
+                  onChange={(e) => setSelectedProject(e.target.value || null)}
+                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">All Projects</option>
+                  {data.projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+      
+      {/* Main Content */}
+      <main className="max-w-6xl mx-auto px-6 py-6">
+        {Object.entries(groupedNotes).map(([groupName, notes]) => (
+          notes.length > 0 && (
+            <div key={groupName} className="mb-6">
+              {groupBy !== 'none' && (
+                <h2 className="text-lg font-semibold text-gray-700 mb-3">{groupName}</h2>
+              )}
+              <div className="space-y-2">
+                {notes.map(note => renderNote(note))}
+              </div>
+            </div>
+          )
+        ))}
+        
+        {data.notes.filter(n => !n.parentId).length === 0 && (
+          <div className="text-center py-12">
+            <p className="text-gray-500">No items yet. Add your first note above!</p>
+          </div>
+        )}
+      </main>
+      
+      {/* Modals */}
+      {showProjectModal && (
+        <ProjectModal
+          onClose={() => setShowProjectModal(false)}
+          onSave={addProject}
+        />
+      )}
+      
+      {showSessionModal && (
+        <SessionModal
+          projects={data.projects}
+          people={data.people}
+          onClose={() => setShowSessionModal(false)}
+          onSave={startSession}
+          onAddPerson={(name) => {
+            const newPerson = {
+              id: generateId(),
+              name,
+              email: '',
+              phone: '',
+              createdAt: Date.now()
+            };
+            setData(prev => ({
+              ...prev,
+              people: [...prev.people, newPerson]
+            }));
+            return newPerson.id;
+          }}
+        />
+      )}
+      
+      {showNoteModal && (
+        <NoteModal
+          note={editingNote}
+          projects={data.projects}
+          noteTypes={data.noteTypes}
+          selectedProject={selectedProject}
+          onClose={() => {
+            setShowNoteModal(false);
+            setEditingNote(null);
+          }}
+          onSave={saveNote}
+        />
+      )}
+    </div>
+  );
+}
+
+// Comment Input Component
+function CommentInput({ noteId, onAdd }) {
+  const [comment, setComment] = useState('');
+  
+  const handleAdd = () => {
+    if (comment.trim()) {
+      onAdd(noteId, comment);
+      setComment('');
+    }
+  };
+  
+  return (
+    <div className="flex gap-2">
+      <input
+        type="text"
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        onKeyPress={(e) => e.key === 'Enter' && handleAdd()}
+        placeholder="Add a comment..."
+        className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+      <button
+        onClick={handleAdd}
+        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded"
+      >
+        Add
+      </button>
+    </div>
+  );
+}
+
+// Project Modal
+function ProjectModal({ onClose, onSave }) {
+  const [name, setName] = useState('');
+  const [details, setDetails] = useState('');
+  
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (name.trim()) {
+      onSave(name, details);
+      onClose();
+    }
+  };
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg max-w-md w-full p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold">New Project</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Project Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Details</label>
+            <textarea
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows="3"
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+              Cancel
+            </button>
+            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
+              Create Project
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// Session Modal
+function SessionModal({ projects, people, onClose, onSave, onAddPerson }) {
+  const [projectId, setProjectId] = useState('');
+  const [title, setTitle] = useState('');
+  const [type, setType] = useState('meeting');
+  const [selectedPeople, setSelectedPeople] = useState([]);
+  const [newPersonName, setNewPersonName] = useState('');
+  
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (projectId && title.trim()) {
+      onSave(projectId, title, type, selectedPeople);
+      onClose();
+    }
+  };
+  
+  const handleAddPerson = () => {
+    if (newPersonName.trim()) {
+      const id = onAddPerson(newPersonName);
+      setSelectedPeople([...selectedPeople, id]);
+      setNewPersonName('');
+    }
+  };
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg max-w-md w-full p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold">Start Session</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
+            <select
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            >
+              <option value="">Select a project...</option>
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="meeting">Meeting</option>
+              <option value="phone_call">Phone Call</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Participants</label>
+            <div className="space-y-2">
+              {people.map(person => (
+                <label key={person.id} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedPeople.includes(person.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedPeople([...selectedPeople, person.id]);
+                      } else {
+                        setSelectedPeople(selectedPeople.filter(id => id !== person.id));
+                      }
+                    }}
+                    className="rounded"
+                  />
+                  <span className="text-sm">{person.name}</span>
+                </label>
+              ))}
+              <div className="flex gap-2 mt-2">
+                <input
+                  type="text"
+                  value={newPersonName}
+                  onChange={(e) => setNewPersonName(e.target.value)}
+                  placeholder="Add new person..."
+                  className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddPerson}
+                  className="px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white text-sm rounded"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+              Cancel
+            </button>
+            <button type="submit" className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg">
+              Start Session
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// Note Modal
+function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave }) {
+  const [content, setContent] = useState(note?.content || '');
+  const [type, setType] = useState(note?.type || 'note');
+  const [projectId, setProjectId] = useState(note?.projectId || selectedProject || '');
+  const [dueDate, setDueDate] = useState(note?.dueDate ? new Date(note.dueDate).toISOString().slice(0, 16) : '');
+  const [status, setStatus] = useState(note?.status || 'not_started');
+  const [isUrgent, setIsUrgent] = useState(note?.isUrgent || false);
+  
+  /* AI Analysis - Commented out for now
+  const handleAnalyze = async () => {
+    if (!content.trim()) return;
+    
+    const analysis = await analyzeWithAI(content);
+    if (analysis) {
+      setContent(analysis.content);
+      setType(analysis.type);
+      setIsUrgent(analysis.isUrgent);
+      if (analysis.dueDate) {
+        setDueDate(new Date(analysis.dueDate).toISOString().slice(0, 16));
+      }
+      if (analysis.type === 'to_do') {
+        setStatus('not_started');
+      }
+    }
+  };
+  */
+  
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (content.trim()) {
+      onSave({
+        ...(note || {}),
+        content,
+        type,
+        projectId: projectId || null,
+        dueDate: dueDate ? new Date(dueDate).getTime() : null,
+        status: type === 'to_do' ? status : null,
+        isUrgent
+      });
+      onClose();
+    }
+  };
+  
+  const showDueDate = type === 'to_do' || type === 'deliverable';
+  const showStatus = type === 'to_do';
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg max-w-md w-full p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold">{note?.id ? 'Edit Item' : 'New Item'}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows="3"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {noteTypes.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </div>
+          {!note?.parentId && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
+              <select
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">No project</option>
+                {projects.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {showDueDate && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+              <input
+                type="datetime-local"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
+          {showStatus && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="not_started">Not Started</option>
+                <option value="in_progress">In Progress</option>
+                <option value="done">Done</option>
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={isUrgent}
+                onChange={(e) => setIsUrgent(e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-sm font-medium text-gray-700">Mark as Urgent</span>
+            </label>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+              Cancel
+            </button>
+            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
+              {note?.id ? 'Save' : 'Create'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

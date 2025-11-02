@@ -1,3 +1,4 @@
+import "./globals.css";
 export const metadata = {
   title: "Task Tracker",
   description: "Tasks with cloud persistence",

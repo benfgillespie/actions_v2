@@ -129,6 +129,10 @@ export default function TaskTracker() {
   });
   const quickEntryRef = useRef(null);
   const datePickerRef = useRef(null);
+  const hasInitializedRef = useRef(false);
+  const lastSavedSnapshotRef = useRef(null);
+  const saveTimeoutRef = useRef(null);
+  const saveAbortControllerRef = useRef(null);
 
   const ensureDefaultNoteTypes = (types = []) => {
     const baseList = Array.isArray(types) ? types.filter(t => t && t.id && t.id !== 'deliverable') : [];
@@ -173,26 +177,152 @@ export default function TaskTracker() {
     };
   };
 
-  // Load data from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem('taskTrackerData');
-    if (saved) {
-      const loadedData = sanitizeLoadedData(JSON.parse(saved));
+    let cancelled = false;
+
+    const applyLoadedState = (loadedData, markAsSaved = false) => {
+      if (cancelled) return;
       setData(loadedData);
-      
-      // Check for active session
+
       const active = loadedData.sessions.find(s => s.isActive);
       if (active) {
         setActiveSession(active);
         setSelectedProject(active.projectId);
+      } else {
+        setActiveSession(null);
       }
-    }
+
+      hasInitializedRef.current = true;
+      if (markAsSaved) {
+        try {
+          lastSavedSnapshotRef.current = JSON.stringify(loadedData);
+        } catch {
+          lastSavedSnapshotRef.current = null;
+        }
+      } else {
+        lastSavedSnapshotRef.current = null;
+      }
+    };
+
+    const loadFromLocalStorage = () => {
+      if (typeof window === 'undefined') return false;
+      try {
+        const saved = window.localStorage.getItem('taskTrackerData');
+        if (!saved) return false;
+        const loadedData = sanitizeLoadedData(JSON.parse(saved));
+        applyLoadedState(loadedData);
+        return true;
+      } catch (error) {
+        console.error('Failed to load task tracker data from localStorage', error);
+        return false;
+      }
+    };
+
+    const loadData = async () => {
+      try {
+        const response = await fetch('/api/data', { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Failed to load data (${response.status})`);
+        }
+        const body = await response.json();
+        const loadedData = sanitizeLoadedData(body);
+        applyLoadedState(loadedData, true);
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('taskTrackerData', JSON.stringify(loadedData));
+        }
+      } catch (error) {
+        console.error('Failed to load task tracker data from API', error);
+        const loaded = loadFromLocalStorage();
+        if (!loaded && !cancelled) {
+          hasInitializedRef.current = true;
+          lastSavedSnapshotRef.current = null;
+        }
+      }
+    };
+
+    loadData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Save data to localStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem('taskTrackerData', JSON.stringify(data));
+    if (!hasInitializedRef.current || typeof window === 'undefined') return;
+    window.localStorage.setItem('taskTrackerData', JSON.stringify(data));
   }, [data]);
+
+  useEffect(() => {
+    if (!hasInitializedRef.current) return;
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // Debounce persistence to avoid flooding the API during rapid edits
+    saveTimeoutRef.current = window.setTimeout(() => {
+      const payload = (() => {
+        try {
+          return JSON.stringify(data);
+        } catch (error) {
+          console.error('Failed to serialize task tracker data for saving', error);
+          return null;
+        }
+      })();
+
+      if (!payload) return;
+      if (payload === lastSavedSnapshotRef.current) return;
+
+      if (saveAbortControllerRef.current) {
+        saveAbortControllerRef.current.abort();
+      }
+
+      const controller = new AbortController();
+      saveAbortControllerRef.current = controller;
+
+      const persist = async () => {
+        try {
+          const response = await fetch('/api/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            signal: controller.signal
+          });
+          if (!response.ok) {
+            throw new Error(`Failed to save data (${response.status})`);
+          }
+          lastSavedSnapshotRef.current = payload;
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          console.error('Failed to save task tracker data', error);
+        } finally {
+          if (saveAbortControllerRef.current === controller) {
+            saveAbortControllerRef.current = null;
+          }
+        }
+      };
+
+      persist();
+    }, 400);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+    };
+  }, [data]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+      if (saveAbortControllerRef.current) {
+        saveAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!pendingDueDate) return;
@@ -1930,16 +2060,42 @@ function ThreadInput({ noteId, onAdd }) {
     }
   };
 
+  const clearTag = (type) => {
+    if (type === 'dueDate') {
+      setSelectedDueDate(null);
+      setPendingDueDate(null);
+      setDatePickerVisible(false);
+      setValue(prev => removeDueDateTag(prev));
+      return;
+    }
+    setTagState(prev => {
+      const next = { ...prev };
+      if (type === 'type') {
+        next.type = 'note';
+      } else if (type === 'urgent') {
+        next.isUrgent = false;
+      } else if (type === 'comment') {
+        next.isComment = false;
+      }
+      return next;
+    });
+  };
+
   const handleSubmit = () => {
     const trimmed = value.trim();
     if (!trimmed) return;
     const parsed = parseTags(value);
+    const content = parsed.content || trimmed;
+    const finalType = tagState.type !== 'note' ? tagState.type : parsed.type || 'note';
+    const finalUrgent = tagState.isUrgent || parsed.isUrgent;
+    const finalIsComment = tagState.isComment || parsed.isComment;
+    const finalDueDate = selectedDueDate ?? pendingDueDate ?? parsed.dueDate ?? null;
     const payload = {
-      content: parsed.content || trimmed,
-      type: parsed.type || tagState.type,
-      isUrgent: parsed.isUrgent || tagState.isUrgent,
-      isComment: parsed.isComment || tagState.isComment,
-      dueDate: selectedDueDate ?? pendingDueDate ?? parsed.dueDate ?? null
+      content,
+      type: finalType,
+      isUrgent: finalUrgent,
+      isComment: finalIsComment,
+      dueDate: finalDueDate
     };
     if (typeof onAdd === 'function') {
       onAdd(noteId, payload);
@@ -1967,95 +2123,168 @@ function ThreadInput({ noteId, onAdd }) {
   today.setHours(0, 0, 0, 0);
 
   const isAddDisabled = value.trim().length === 0;
+  const activeDueDate = selectedDueDate ?? null;
+  const activeDueDateObj = activeDueDate ? new Date(activeDueDate) : null;
+  const showTags = tagState.type !== 'note' || tagState.isUrgent || tagState.isComment || !!activeDueDateObj;
 
   return (
-    <div className="relative flex items-center gap-2 w-full max-w-xs" ref={containerRef}>
-      <input
-        ref={inputRef}
-        type="text"
-        value={value}
-        onChange={(e) => handleChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Add sub-item…"
-        className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
-      <button
-        type="button"
-        onClick={handleSubmit}
-        disabled={isAddDisabled}
-        className={`px-3 py-1.5 rounded text-sm font-medium ${
-          isAddDisabled ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'
-        }`}
-      >
-        Add
-      </button>
-
-      {datePickerVisible && (
-        <div
-          ref={datePickerRef}
-          className="absolute top-full right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-3"
+    <div className="relative flex flex-col gap-2 w-full max-w-xs" ref={containerRef}>
+      <div className="relative flex items-center gap-2">
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={(e) => handleChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Add sub-item…"
+          className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={isAddDisabled}
+          className={`px-3 py-1.5 rounded text-sm font-medium ${
+            isAddDisabled ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'
+          }`}
         >
-          <div className="flex items-center justify-between mb-2">
-            <button
-              type="button"
-              onClick={() => setDatePickerMonth(prev => addMonths(prev, -1))}
-              className="p-1 text-gray-500 hover:text-gray-700 rounded"
-              aria-label="Previous month"
-            >
-              ‹
-            </button>
-            <span className="text-sm font-semibold text-gray-800">{monthLabel}</span>
-            <button
-              type="button"
-              onClick={() => setDatePickerMonth(prev => addMonths(prev, 1))}
-              className="p-1 text-gray-500 hover:text-gray-700 rounded"
-              aria-label="Next month"
-            >
-              ›
-            </button>
-          </div>
-          <div className="text-xs text-gray-500 mb-2">
-            {pendingDateObj
-              ? pendingDateObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-              : 'Select a date'}
-          </div>
-          <div className="grid grid-cols-7 gap-1 text-xs text-gray-500 mb-1">
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-              <div key={day} className="text-center">{day}</div>
-            ))}
-          </div>
-          <div className="grid grid-cols-7 gap-1 text-sm">
-            {calendarDays.map(day => {
-              const isCurrentMonth = day.getMonth() === datePickerMonth.getMonth();
-              const isPending = pendingDateObj ? areSameDay(day, pendingDateObj) : false;
-              const isSelected = !isPending && selectedDateObj ? areSameDay(day, selectedDateObj) : false;
-              const isToday = areSameDay(day, today);
-              
-              let buttonClasses = 'h-8 w-full rounded-md flex items-center justify-center transition ';
-              if (!isCurrentMonth) {
-                buttonClasses += 'text-gray-300 hover:text-gray-500';
-              } else if (isPending) {
-                buttonClasses += 'bg-blue-600 text-white hover:bg-blue-700';
-              } else if (isSelected) {
-                buttonClasses += 'bg-blue-100 text-blue-700 hover:bg-blue-200';
-              } else if (isToday) {
-                buttonClasses += 'border border-blue-500 text-blue-600 hover:bg-blue-50';
-              } else {
-                buttonClasses += 'text-gray-700 hover:bg-gray-100';
-              }
+          Add
+        </button>
 
-              return (
-                <button
-                  key={day.toISOString()}
-                  type="button"
-                  onClick={() => handleSelectDate(new Date(day))}
-                  className={buttonClasses}
-                >
-                  {day.getDate()}
-                </button>
-              );
-            })}
+        {datePickerVisible && (
+          <div
+            ref={datePickerRef}
+            className="absolute top-full right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-3"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <button
+                type="button"
+                onClick={() => setDatePickerMonth(prev => addMonths(prev, -1))}
+                className="p-1 text-gray-500 hover:text-gray-700 rounded"
+                aria-label="Previous month"
+              >
+                ‹
+              </button>
+              <span className="text-sm font-semibold text-gray-800">{monthLabel}</span>
+              <button
+                type="button"
+                onClick={() => setDatePickerMonth(prev => addMonths(prev, 1))}
+                className="p-1 text-gray-500 hover:text-gray-700 rounded"
+                aria-label="Next month"
+              >
+                ›
+              </button>
+            </div>
+            <div className="text-xs text-gray-500 mb-2">
+              {pendingDateObj
+                ? pendingDateObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+                : 'Select a date'}
+            </div>
+            <div className="grid grid-cols-7 gap-1 text-xs text-gray-500 mb-1">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                <div key={day} className="text-center">{day}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1 text-sm">
+              {calendarDays.map(day => {
+                const isCurrentMonth = day.getMonth() === datePickerMonth.getMonth();
+                const isPending = pendingDateObj ? areSameDay(day, pendingDateObj) : false;
+                const isSelected = !isPending && selectedDateObj ? areSameDay(day, selectedDateObj) : false;
+                const isToday = areSameDay(day, today);
+                
+                let buttonClasses = 'h-8 w-full rounded-md flex items-center justify-center transition ';
+                if (!isCurrentMonth) {
+                  buttonClasses += 'text-gray-300 hover:text-gray-500';
+                } else if (isPending) {
+                  buttonClasses += 'bg-blue-600 text-white hover:bg-blue-700';
+                } else if (isSelected) {
+                  buttonClasses += 'bg-blue-100 text-blue-700 hover:bg-blue-200';
+                } else if (isToday) {
+                  buttonClasses += 'border border-blue-500 text-blue-600 hover:bg-blue-50';
+                } else {
+                  buttonClasses += 'text-gray-700 hover:bg-gray-100';
+                }
+
+                return (
+                  <button
+                    key={day.toISOString()}
+                    type="button"
+                    onClick={() => handleSelectDate(new Date(day))}
+                    className={buttonClasses}
+                  >
+                    {day.getDate()}
+                  </button>
+                );
+              })}
+            </div>
           </div>
+        )}
+      </div>
+
+      <div className="text-[11px] text-gray-500">
+        Tags: <span className="font-mono bg-gray-100 px-1 rounded">/a</span> action,
+        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/n</span> note,
+        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/u</span> urgent,
+        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/d 3</span> due in 3 days,
+        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/d 2024-12-31</span> due on date,
+        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/c</span> comment
+      </div>
+
+      {showTags && (
+        <div className="flex flex-wrap gap-2 text-xs">
+          {tagState.type !== 'note' && (
+            <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
+              <span className="font-medium">{tagState.type === 'to_do' ? 'To Do' : toTitleCase(tagState.type)}</span>
+              <button
+                type="button"
+                onClick={() => clearTag('type')}
+                className="hover:bg-blue-200 rounded-full p-0.5"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
+          {tagState.isUrgent && (
+            <div className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 rounded-full">
+              <AlertCircle size={12} />
+              <span className="font-medium">Urgent</span>
+              <button
+                type="button"
+                onClick={() => clearTag('urgent')}
+                className="hover:bg-red-200 rounded-full p-0.5"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
+          {tagState.isComment && (
+            <div className="inline-flex items-center gap-1 px-2 py-1 bg-gray-200 text-gray-700 rounded-full">
+              <MessageSquare size={12} />
+              <span className="font-medium">Comment</span>
+              <button
+                type="button"
+                onClick={() => clearTag('comment')}
+                className="hover:bg-gray-300 rounded-full p-0.5"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
+          {activeDueDateObj && (
+            <div className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 rounded-full">
+              <Calendar size={12} />
+              <span className="font-medium">Due: {formatDateShort(activeDueDate)}</span>
+              <button
+                type="button"
+                onClick={() => clearTag('dueDate')}
+                className="hover:bg-purple-200 rounded-full p-0.5"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

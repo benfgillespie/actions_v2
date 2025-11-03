@@ -16,6 +16,8 @@ const formatDateShort = (timestamp) => {
   return date.toLocaleDateString();
 };
 
+const SESSION_FILTER_ALL = '__ALL__';
+
 // Initial data structure
 const initialData = {
   projects: [],
@@ -41,6 +43,7 @@ export default function TaskTracker() {
   const [activeSession, setActiveSession] = useState(null);
   const [filterBy, setFilterBy] = useState('all');
   const [groupBy, setGroupBy] = useState('none');
+  const [selectedSessionFilter, setSelectedSessionFilter] = useState(null);
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
@@ -51,6 +54,7 @@ export default function TaskTracker() {
   const [showProjectAutocomplete, setShowProjectAutocomplete] = useState(false);
   const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = useState(0);
   const [appliedTags, setAppliedTags] = useState({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
+  const [tagFilter, setTagFilter] = useState(null);
 
   // Load data from localStorage on mount
   useEffect(() => {
@@ -152,6 +156,32 @@ Rules:
     }
   };
   */
+
+  const handleTagFilter = (type, value, label) => {
+    setTagFilter(prev => 
+      prev && prev.type === type && prev.value === value
+        ? null
+        : { type, value, label }
+    );
+  };
+
+  const isTagActive = (type, value) => 
+    tagFilter?.type === type && tagFilter.value === value;
+
+  const clearTagFilter = () => setTagFilter(null);
+
+  const handleSessionFilter = (sessionId) => {
+    if (!sessionId) return;
+    const currentTarget = selectedSessionFilter || activeSession?.id;
+    if (filterBy === 'session' && currentTarget === sessionId) {
+      setFilterBy('all');
+      setSelectedSessionFilter(null);
+    } else {
+      setFilterBy('session');
+      setSelectedSessionFilter(sessionId);
+    }
+    clearTagFilter();
+  };
 
   // Parse tags from note content
   const parseTags = (text) => {
@@ -562,6 +592,28 @@ Rules:
       filtered = filtered.filter(n => n.dueDate && n.dueDate <= weekFromNow);
     } else if (filterBy === 'to_do') {
       filtered = filtered.filter(n => n.type === 'to_do' && n.status !== 'done');
+    } else if (filterBy === 'session') {
+      if (selectedSessionFilter === SESSION_FILTER_ALL) {
+        filtered = filtered.filter(n => n.sessionId);
+      } else {
+        const sessionId = selectedSessionFilter || activeSession?.id;
+        if (sessionId) {
+          filtered = filtered.filter(n => n.sessionId === sessionId);
+        } else {
+          filtered = filtered.filter(n => n.sessionId);
+        }
+      }
+    }
+    
+    // Apply tag-driven filters
+    if (tagFilter) {
+      if (tagFilter.type === 'project') {
+        filtered = filtered.filter(n => n.projectId === tagFilter.value);
+      } else if (tagFilter.type === 'type') {
+        filtered = filtered.filter(n => n.type === tagFilter.value);
+      } else if (tagFilter.type === 'status') {
+        filtered = filtered.filter(n => n.status === tagFilter.value);
+      }
     }
     
     // Sort by creation date (newest first)
@@ -590,6 +642,15 @@ Rules:
       filtered.forEach(note => {
         const type = data.noteTypes.find(t => t.id === note.type);
         const key = type ? type.name : 'Unknown';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(note);
+      });
+      return grouped;
+    } else if (groupBy === 'session') {
+      const grouped = {};
+      filtered.forEach(note => {
+        const session = data.sessions.find(s => s.id === note.sessionId);
+        const key = session ? session.title : 'No Session';
         if (!grouped[key]) grouped[key] = [];
         grouped[key].push(note);
       });
@@ -624,6 +685,30 @@ Rules:
     const noteComments = data.comments.filter(c => c.noteId === note.id);
     const isExpanded = expandedNotes.has(note.id);
     const showCommentsSection = showComments.has(note.id);
+    const typeDefinition = data.noteTypes.find(t => t.id === note.type);
+    const typeLabel = typeDefinition ? typeDefinition.name : 'Unknown';
+    const typeClasses = note.type === 'to_do'
+      ? 'bg-blue-100 text-blue-700'
+      : note.type === 'deliverable'
+        ? 'bg-purple-100 text-purple-700'
+        : 'bg-gray-100 text-gray-700';
+    const statusLabel = note.status
+      ? note.status === 'not_started'
+        ? 'Not Started'
+        : note.status === 'in_progress'
+          ? 'In Progress'
+          : 'Done'
+      : null;
+    const statusClasses = note.status === 'done'
+      ? 'bg-green-100 text-green-700'
+      : note.status === 'in_progress'
+        ? 'bg-yellow-100 text-yellow-700'
+        : 'bg-gray-100 text-gray-600';
+    const typeActive = isTagActive('type', note.type);
+    const statusActive = note.status ? isTagActive('status', note.status) : false;
+    const projectActive = project ? isTagActive('project', project.id) : false;
+    const sessionTarget = selectedSessionFilter || activeSession?.id;
+    const sessionActive = session ? filterBy === 'session' && sessionTarget === session.id : false;
     
     return (
       <div key={note.id} className="mb-2" style={{ marginLeft: `${depth * 24}px` }}>
@@ -639,39 +724,48 @@ Rules:
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                      note.type === 'to_do' ? 'bg-blue-100 text-blue-700' :
-                      note.type === 'deliverable' ? 'bg-purple-100 text-purple-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {data.noteTypes.find(t => t.id === note.type)?.name}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleTagFilter('type', note.type, typeLabel)}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${typeClasses} hover:opacity-90 ${typeActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
+                    >
+                      {typeLabel}
+                    </button>
                     
                     {note.isUrgent && (
-                      <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium flex items-center gap-1">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-medium">
                         <AlertCircle size={12} /> Urgent
                       </span>
                     )}
                     
-                    {note.status && (
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        note.status === 'done' ? 'bg-green-100 text-green-700' :
-                        note.status === 'in_progress' ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-gray-100 text-gray-600'
-                      }`}>
-                        {note.status === 'not_started' ? 'Not Started' :
-                         note.status === 'in_progress' ? 'In Progress' : 'Done'}
-                      </span>
+                    {note.status && statusLabel && (
+                      <button
+                        type="button"
+                        onClick={() => handleTagFilter('status', note.status, statusLabel)}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${statusClasses} hover:opacity-90 ${statusActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
+                      >
+                        {statusLabel}
+                      </button>
                     )}
                     
                     {project && (
-                      <span className="text-xs text-gray-500 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleTagFilter('project', project.id, project.name)}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors ${projectActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
+                      >
                         <Folder size={12} /> {project.name}
-                      </span>
+                      </button>
                     )}
                     
                     {session && (
-                      <span className="text-xs text-gray-500">in {session.title}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleSessionFilter(session.id)}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 transition-colors ${sessionActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
+                      >
+                        <Clock size={12} /> {session.title}
+                      </button>
                     )}
                   </div>
                   
@@ -986,10 +1080,22 @@ Rules:
               <Plus size={16} /> New Item
             </button>
             
-            <div className="flex gap-2 ml-auto">
+            <div className="flex gap-2 ml-auto flex-wrap items-center">
               <select
                 value={filterBy}
-                onChange={(e) => setFilterBy(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setFilterBy(value);
+                  if (value === 'session' && !selectedSessionFilter) {
+                    if (activeSession) {
+                      setSelectedSessionFilter(activeSession.id);
+                    } else if (data.sessions.length > 0) {
+                      setSelectedSessionFilter(data.sessions[data.sessions.length - 1].id);
+                    } else {
+                      setSelectedSessionFilter(SESSION_FILTER_ALL);
+                    }
+                  }
+                }}
                 className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Items</option>
@@ -997,6 +1103,7 @@ Rules:
                 <option value="urgent">Urgent</option>
                 <option value="due_week">Due This Week</option>
                 <option value="to_do">Active To-Dos</option>
+                <option value="session">Session Origin</option>
               </select>
               
               <select
@@ -1007,6 +1114,7 @@ Rules:
                 <option value="none">No Grouping</option>
                 <option value="project">Group by Project</option>
                 <option value="type">Group by Type</option>
+                <option value="session">Group by Session</option>
                 <option value="due_date">Group by Due Date</option>
               </select>
               
@@ -1021,6 +1129,49 @@ Rules:
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
+              )}
+
+              {data.sessions.length > 0 && (
+                <select
+                  value={selectedSessionFilter === SESSION_FILTER_ALL ? 'all' : selectedSessionFilter || ''}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    if (next === 'all') {
+                      setSelectedSessionFilter(SESSION_FILTER_ALL);
+                    } else if (next) {
+                      setSelectedSessionFilter(next);
+                    } else {
+                      setSelectedSessionFilter(null);
+                    }
+                  }}
+                  disabled={filterBy !== 'session'}
+                  className={`px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${filterBy !== 'session' ? 'bg-gray-100 text-gray-500' : ''}`}
+                >
+                  <option value="">{activeSession ? 'Active Session' : 'Latest Session'}</option>
+                  <option value="all">All Sessions</option>
+                  {data.sessions.map(s => (
+                    <option key={s.id} value={s.id}>{s.title}</option>
+                  ))}
+                </select>
+              )}
+
+              {tagFilter && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded-full text-sm">
+                  <span>
+                    {(tagFilter.type === 'project' && 'Project') ||
+                     (tagFilter.type === 'type' && 'Type') ||
+                     (tagFilter.type === 'status' && 'Status') ||
+                     'Tag'}: {tagFilter.label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearTagFilter}
+                    className="p-0.5 rounded-full hover:bg-blue-200 text-blue-700"
+                    aria-label="Clear tag filter"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
               )}
             </div>
           </div>

@@ -362,13 +362,6 @@ export default function TaskTracker() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [showColumnMenu]);
 
-  useEffect(() => {
-    return () => {
-      document.removeEventListener('mousemove', handleColumnResizeMouseMove);
-      document.removeEventListener('mouseup', handleColumnResizeMouseUp);
-    };
-  }, [handleColumnResizeMouseMove, handleColumnResizeMouseUp]);
-
   // AI Analysis - Commented out for now
   /*
   const analyzeWithAI = async (content) => {
@@ -613,6 +606,13 @@ Rules:
     document.addEventListener('mousemove', handleColumnResizeMouseMove);
     document.addEventListener('mouseup', handleColumnResizeMouseUp);
   }, [columnWidths, itemColumnWidth, handleColumnResizeMouseMove, handleColumnResizeMouseUp]);
+
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleColumnResizeMouseMove);
+      document.removeEventListener('mouseup', handleColumnResizeMouseUp);
+    };
+  }, [handleColumnResizeMouseMove, handleColumnResizeMouseUp]);
 
   // Parse tags from note content
   const parseTags = (text) => {

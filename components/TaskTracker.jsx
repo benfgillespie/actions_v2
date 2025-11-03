@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square } from 'lucide-react';
 
 // Utility functions
@@ -14,6 +14,38 @@ const formatDateShort = (timestamp) => {
   if (!timestamp) return '';
   const date = new Date(timestamp);
   return date.toLocaleDateString();
+};
+
+const removeDueDateTag = (text) =>
+  text.replace(/\/d(?:\s+\d+(?:\s*days?)?|\s+\d{4}-\d{2}-\d{2}|\s*)?/i, ' ').replace(/\s+/g, ' ').trim();
+
+const areSameDay = (a, b) =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+const startOfMonth = (date) => new Date(date.getFullYear(), date.getMonth(), 1);
+
+const addMonths = (date, count) => {
+  const newDate = new Date(date);
+  newDate.setMonth(newDate.getMonth() + count);
+  return newDate;
+};
+
+const getCalendarDays = (monthDate) => {
+  const firstOfMonth = startOfMonth(monthDate);
+  const startDay = firstOfMonth.getDay(); // 0 (Sun) - 6 (Sat)
+  const firstGridDate = new Date(firstOfMonth);
+  firstGridDate.setDate(firstOfMonth.getDate() - startDay);
+
+  const days = [];
+  for (let i = 0; i < 42; i++) {
+    const day = new Date(firstGridDate);
+    day.setDate(firstGridDate.getDate() + i);
+    day.setHours(0, 0, 0, 0);
+    days.push(day);
+  }
+  return days;
 };
 
 const toTitleCase = (value) => {
@@ -88,6 +120,15 @@ export default function TaskTracker() {
   const [tagFilter, setTagFilter] = useState(null);
   const [columnVisibility, setColumnVisibility] = useState(() => ({ ...INITIAL_COLUMN_VISIBILITY }));
   const [showColumnMenu, setShowColumnMenu] = useState(false);
+  const [pendingDueDate, setPendingDueDate] = useState(null);
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [datePickerMonth, setDatePickerMonth] = useState(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return startOfMonth(today);
+  });
+  const quickEntryRef = useRef(null);
+  const datePickerRef = useRef(null);
 
   const ensureDefaultNoteTypes = (types = []) => {
     const baseList = Array.isArray(types) ? types.filter(t => t && t.id && t.id !== 'deliverable') : [];
@@ -152,6 +193,24 @@ export default function TaskTracker() {
   useEffect(() => {
     localStorage.setItem('taskTrackerData', JSON.stringify(data));
   }, [data]);
+
+  useEffect(() => {
+    if (!pendingDueDate) return;
+    const monthStart = startOfMonth(new Date(pendingDueDate));
+    setDatePickerMonth(monthStart);
+  }, [pendingDueDate]);
+
+  useEffect(() => {
+    if (!datePickerVisible) return;
+    const handleClickOutside = (event) => {
+      if (datePickerRef.current && datePickerRef.current.contains(event.target)) return;
+      if (quickEntryRef.current && quickEntryRef.current.contains(event.target)) return;
+      setDatePickerVisible(false);
+      setPendingDueDate(null);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [datePickerVisible]);
 
   // AI Analysis - Commented out for now
   /*
@@ -339,10 +398,13 @@ Rules:
             if (daysMatch) {
               // /d n or /d n days - set due date
               const days = parseInt(daysMatch[1]);
-              tags.dueDate = Date.now() + (days * 24 * 60 * 60 * 1000);
+              const base = new Date();
+              base.setHours(0, 0, 0, 0);
+              base.setDate(base.getDate() + days);
+              tags.dueDate = base.getTime();
               cleanContent = cleanContent.replace(match[0], '').trim();
             } else {
-              const parsed = Date.parse(value);
+              const parsed = Date.parse(`${value}T00:00:00`);
               if (!Number.isNaN(parsed)) {
                 tags.dueDate = parsed;
                 cleanContent = cleanContent.replace(match[0], '').trim();
@@ -378,70 +440,94 @@ Rules:
   };
 
   // Handle project autocomplete
+  const updateDueDatePreview = (text) => {
+    const absoluteMatch = text.match(/\/d\s+(\d{4}-\d{2}-\d{2})/i);
+    if (absoluteMatch) {
+      const parsed = Date.parse(`${absoluteMatch[1]}T00:00:00`);
+      if (!Number.isNaN(parsed)) {
+        setPendingDueDate(parsed);
+        setDatePickerVisible(true);
+        return;
+      }
+    }
+
+    const relativeMatch = text.match(/\/d\s+(\d{1,2})(?:\s*(?:days?)?)?/i);
+    if (relativeMatch) {
+      const days = parseInt(relativeMatch[1], 10);
+      if (!Number.isNaN(days)) {
+        const base = new Date();
+        base.setHours(0, 0, 0, 0);
+        base.setDate(base.getDate() + days);
+        setPendingDueDate(base.getTime());
+        setDatePickerVisible(true);
+        return;
+      }
+    }
+
+    if (/\/d\b/i.test(text)) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      setPendingDueDate(today.getTime());
+      setDatePickerVisible(true);
+      return;
+    }
+
+    setPendingDueDate(null);
+    setDatePickerVisible(false);
+  };
+
+  const handleDatePickerSelect = (dateObj) => {
+    const timestamp = dateObj.getTime();
+    setAppliedTags(prev => ({ ...prev, dueDate: timestamp }));
+    setQuickEntry(prev => removeDueDateTag(prev));
+    setPendingDueDate(null);
+    setDatePickerVisible(false);
+    if (quickEntryRef.current) {
+      const inputEl = quickEntryRef.current.querySelector('input');
+      if (inputEl) {
+        inputEl.focus();
+      }
+    }
+  };
+
   const handleQuickEntryChange = (value) => {
-    let newText = value;
+    let workingText = value;
     let newTags = { ...appliedTags };
-    let textChanged = false;
+    let mutated = false;
     
     // Check for /a (action/to_do) tag
-    if (/\/a(?:\s|$|\/)/i.test(newText)) {
+    if (/\/a(?:\s|$|\/)/i.test(workingText)) {
       newTags.type = 'to_do';
-      newText = newText.replace(/\/a(?=\s|$|\/)/gi, '').trim();
-      textChanged = true;
+      workingText = workingText.replace(/\/a(?=\s|$|\/)/gi, '').trim();
+      mutated = true;
     }
     
     // Check for /n (note) tag
-    if (/\/n(?:\s|$|\/)/i.test(newText)) {
+    if (/\/n(?:\s|$|\/)/i.test(workingText)) {
       newTags.type = 'note';
-      newText = newText.replace(/\/n(?=\s|$|\/)/gi, '').trim();
-      textChanged = true;
+      workingText = workingText.replace(/\/n(?=\s|$|\/)/gi, '').trim();
+      mutated = true;
     }
     
     // Check for /u (urgent) tag
-    if (/\/u(?:\s|$|\/)/i.test(newText)) {
+    if (/\/u(?:\s|$|\/)/i.test(workingText)) {
       newTags.isUrgent = true;
-      newText = newText.replace(/\/u(?=\s|$|\/)/gi, '').trim();
-      textChanged = true;
+      workingText = workingText.replace(/\/u(?=\s|$|\/)/gi, '').trim();
+      mutated = true;
     }
-    
-    // Check for /d with absolute date (YYYY-MM-DD)
-    const absoluteDateMatch = newText.match(/\/d\s+(\d{4}-\d{2}-\d{2})(?=\s|$|\/)/i);
-    if (absoluteDateMatch) {
-      const parsed = Date.parse(absoluteDateMatch[1]);
-      if (!Number.isNaN(parsed)) {
-        newTags.dueDate = parsed;
-        newText = newText.replace(/\/d\s+\d{4}-\d{2}-\d{2}(?=\s|$|\/)/i, '').trim();
-        textChanged = true;
-      }
-    }
-    
-    // Check for /d followed by number (due in N days) only if absolute date not applied
-    if (!textChanged) {
-      const dueDateMatch = newText.match(/\/d\s+(\d+)\s*(?:days?)?(?=\s|$|\/)/i);
-      if (dueDateMatch) {
-        const days = parseInt(dueDateMatch[1]);
-        newTags.dueDate = Date.now() + (days * 24 * 60 * 60 * 1000);
-        newText = newText.replace(/\/d\s+\d+\s*(?:days?)?(?=\s|$|\/)/i, '').trim();
-        textChanged = true;
-      }
-    }
-    
-    // Only clean up multiple spaces if we changed the text
-    if (textChanged) {
-      newText = newText.replace(/\s+/g, ' ').trim();
-      setQuickEntry(newText);
+
+    let finalText = mutated ? workingText.replace(/\s+/g, ' ').trim() : value;
+
+    if (mutated) {
       setAppliedTags(newTags);
-    } else {
-      // No tags detected, just update the text as-is
-      setQuickEntry(value);
     }
+
+    setQuickEntry(finalText);
+    updateDueDatePreview(finalText);
     
-    // Check for /p tag (don't auto-apply, just show autocomplete)
-    // Only check if we don't have the /p in the cleaned text from tag removal
-    const pTagMatch = value.match(/\/p(?:\s+(.+?))?$/i);
-    if (pTagMatch && !textChanged) {
+    const pTagMatch = finalText.match(/\/p(?:\s+(.+?))?$/i);
+    if (pTagMatch) {
       setShowProjectAutocomplete(true);
-      // Reset to first item when autocomplete opens or text changes
       setSelectedAutocompleteIndex(0);
     } else {
       setShowProjectAutocomplete(false);
@@ -503,6 +589,7 @@ Rules:
     setQuickEntry(newText);
     setAppliedTags(prev => ({ ...prev, projectId: project.id }));
     setShowProjectAutocomplete(false);
+    updateDueDatePreview(newText);
   };
 
   // Create new project and apply tag
@@ -535,6 +622,8 @@ Rules:
         break;
       case 'dueDate':
         newTags.dueDate = null;
+        setPendingDueDate(null);
+        setDatePickerVisible(false);
         break;
       case 'project':
         newTags.projectId = null;
@@ -546,18 +635,26 @@ Rules:
 
   // Quick add note with applied tags
   const handleQuickAdd = () => {
-    if (!quickEntry.trim()) return;
-    
+    const rawText = quickEntry.trim();
+    if (!rawText) return;
+
+    const parsed = parseTags(rawText);
+    const content = parsed.content || rawText;
+    const finalType = appliedTags.type !== 'note' ? appliedTags.type : parsed.type || 'note';
+    const finalDueDate = parsed.dueDate ?? appliedTags.dueDate ?? null;
+    const finalUrgent = appliedTags.isUrgent || parsed.isUrgent;
+    const finalProjectId = appliedTags.projectId || selectedProject;
+
     const newNote = {
       id: generateId(),
-      projectId: appliedTags.projectId || selectedProject,
+      projectId: finalProjectId,
       sessionId: activeSession?.id || null,
       parentId: null,
-      type: appliedTags.type,
-      content: quickEntry.trim(),
-      dueDate: appliedTags.dueDate,
+      type: finalType,
+      content,
+      dueDate: finalDueDate,
       status: 'not_started',
-      isUrgent: appliedTags.isUrgent,
+      isUrgent: finalUrgent,
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -569,6 +666,8 @@ Rules:
     setQuickEntry('');
     setShowProjectAutocomplete(false);
     setAppliedTags({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
+    setPendingDueDate(null);
+    setDatePickerVisible(false);
   };
 
   // Add project
@@ -1181,7 +1280,7 @@ Rules:
           {/* Quick Entry */}
           <div className="relative">
             <div className="flex gap-2">
-              <div className="flex-1 relative">
+              <div className="flex-1 relative" ref={quickEntryRef}>
                 <input
                   type="text"
                   value={quickEntry}
@@ -1190,6 +1289,88 @@ Rules:
                   placeholder="Quick add note... (use tags: /a /d /n /u /p)"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+
+                {datePickerVisible && (
+                  <div
+                    ref={datePickerRef}
+                    className="absolute top-full right-0 mt-2 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-3"
+                  >
+                    {(() => {
+                      const pendingDateObj = pendingDueDate ? new Date(pendingDueDate) : null;
+                      const appliedDateObj = appliedTags.dueDate ? new Date(appliedTags.dueDate) : null;
+                      const calendarDays = getCalendarDays(datePickerMonth);
+                      const monthLabel = datePickerMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+
+                      return (
+                        <>
+                          <div className="flex items-center justify-between mb-2">
+                            <button
+                              type="button"
+                              onClick={() => setDatePickerMonth(prev => addMonths(prev, -1))}
+                              className="p-1 text-gray-500 hover:text-gray-700 rounded"
+                              aria-label="Previous month"
+                            >
+                              ‹
+                            </button>
+                            <span className="text-sm font-semibold text-gray-800">{monthLabel}</span>
+                            <button
+                              type="button"
+                              onClick={() => setDatePickerMonth(prev => addMonths(prev, 1))}
+                              className="p-1 text-gray-500 hover:text-gray-700 rounded"
+                              aria-label="Next month"
+                            >
+                              ›
+                            </button>
+                          </div>
+                          <div className="text-xs text-gray-500 mb-2">
+                            {pendingDateObj
+                              ? pendingDateObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+                              : 'Select a date'}
+                          </div>
+                          <div className="grid grid-cols-7 gap-1 text-xs text-gray-500 mb-1">
+                            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                              <div key={day} className="text-center">{day}</div>
+                            ))}
+                          </div>
+                          <div className="grid grid-cols-7 gap-1 text-sm">
+                            {calendarDays.map(day => {
+                              const isCurrentMonth = day.getMonth() === datePickerMonth.getMonth();
+                              const isPending = pendingDateObj ? areSameDay(day, pendingDateObj) : false;
+                              const isApplied = !isPending && appliedDateObj ? areSameDay(day, appliedDateObj) : false;
+                              const isToday = areSameDay(day, today);
+                              
+                              let buttonClasses = 'h-9 w-full rounded-md flex items-center justify-center transition ';
+                              if (!isCurrentMonth) {
+                                buttonClasses += 'text-gray-300 hover:text-gray-500';
+                              } else if (isPending) {
+                                buttonClasses += 'bg-blue-600 text-white hover:bg-blue-700';
+                              } else if (isApplied) {
+                                buttonClasses += 'bg-blue-100 text-blue-700 hover:bg-blue-200';
+                              } else if (isToday) {
+                                buttonClasses += 'border border-blue-500 text-blue-600 hover:bg-blue-50';
+                              } else {
+                                buttonClasses += 'text-gray-700 hover:bg-gray-100';
+                              }
+
+                              return (
+                                <button
+                                  key={day.toISOString()}
+                                  type="button"
+                                  onClick={() => handleDatePickerSelect(new Date(day))}
+                                  className={buttonClasses}
+                                >
+                                  {day.getDate()}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
                 
                 {/* Project Autocomplete */}
                 {showProjectAutocomplete && (

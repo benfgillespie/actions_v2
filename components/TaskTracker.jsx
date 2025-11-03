@@ -74,6 +74,7 @@ const COLUMN_DEFS = [
   { id: 'dueDate', label: 'Due Date' },
   { id: 'urgent', label: 'Urgent' },
   { id: 'status', label: 'Status' },
+  { id: 'createdAt', label: 'Date Created' },
   { id: 'actions', label: 'Actions', alwaysVisible: true }
 ];
 
@@ -341,6 +342,17 @@ export default function TaskTracker() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [datePickerVisible]);
+
+  useEffect(() => {
+    if (!showColumnMenu) return;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setShowColumnMenu(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showColumnMenu]);
 
   // AI Analysis - Commented out for now
   /*
@@ -950,6 +962,15 @@ Rules:
     deleteRecursive(noteId);
   };
 
+  const handleDeleteFromModal = (noteId) => {
+    if (!noteId) return;
+    const confirmed = typeof window === 'undefined' ? true : window.confirm('Delete this note and its sub-items?');
+    if (!confirmed) return;
+    deleteNote(noteId);
+    setShowNoteModal(false);
+    setEditingNote(null);
+  };
+
   // Add comment
   const addThreadItem = (noteId, entry) => {
     if (!entry || !entry.content || !entry.content.trim()) return;
@@ -1394,6 +1415,14 @@ Rules:
               </div>
             );
           }
+
+          if (column.id === 'createdAt') {
+            return (
+              <div key={`${rowKey}-created`} className="text-sm text-gray-600">
+                {isNoteRow && note.createdAt ? formatDateShort(note.createdAt) : '—'}
+              </div>
+            );
+          }
           
           if (column.id === 'actions') {
             return (
@@ -1732,37 +1761,12 @@ Rules:
             </button>
             
             <div className="flex gap-2 ml-auto flex-wrap items-center">
-              <div className="relative">
-                <button
-                  onClick={() => setShowColumnMenu(prev => !prev)}
-                  className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
-                >
-                  Columns
-                </button>
-                {showColumnMenu && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-20 p-3 space-y-2">
-                    {COLUMN_DEFS.map(column => (
-                      <label key={column.id} className="flex items-center gap-2 text-sm text-gray-700">
-                        <input
-                          type="checkbox"
-                          className="rounded"
-                          checked={isColumnVisible(column)}
-                          disabled={column.alwaysVisible}
-                          onChange={() => toggleColumnVisibility(column.id)}
-                        />
-                        <span className={column.alwaysVisible ? 'text-gray-400' : ''}>{column.label}</span>
-                      </label>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setShowColumnMenu(false)}
-                      className="text-xs text-gray-500 hover:text-gray-700"
-                    >
-                      Close
-                    </button>
-                  </div>
-                )}
-              </div>
+              <button
+                onClick={() => setShowColumnMenu(true)}
+                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+              >
+                Columns
+              </button>
               <select
                 value={filterBy}
                 onChange={(e) => {
@@ -1894,6 +1898,53 @@ Rules:
           </div>
         )}
       </main>
+
+      {showColumnMenu && (
+        <div
+          className="fixed inset-0 z-40 bg-black bg-opacity-30 flex items-center justify-center p-4"
+          onClick={() => setShowColumnMenu(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-2xl w-full max-w-md p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-800">Choose Columns</h3>
+              <button
+                type="button"
+                className="text-gray-400 hover:text-gray-600"
+                onClick={() => setShowColumnMenu(false)}
+                aria-label="Close column menu"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {COLUMN_DEFS.map(column => (
+                <label key={column.id} className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    className="rounded"
+                    checked={isColumnVisible(column)}
+                    disabled={column.alwaysVisible}
+                    onChange={() => toggleColumnVisibility(column.id)}
+                  />
+                  <span className={column.alwaysVisible ? 'text-gray-400' : ''}>{column.label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowColumnMenu(false)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Modals */}
       {showProjectModal && (
@@ -1937,6 +1988,7 @@ Rules:
             setEditingNote(null);
           }}
           onSave={saveNote}
+          onDelete={handleDeleteFromModal}
         />
       )}
     </div>
@@ -2137,7 +2189,7 @@ function ThreadInput({ noteId, onAdd, parseTags: parseTagsFn }) {
   const showTags = tagState.type !== 'note' || tagState.isUrgent || tagState.isComment || !!activeDueDateObj;
 
   return (
-    <div className="relative flex flex-col gap-2 w-full max-w-lg" ref={containerRef}>
+    <div className="relative flex flex-col gap-2 w-full" ref={containerRef}>
       <div className="relative flex items-center gap-2">
         <input
           ref={inputRef}
@@ -2229,13 +2281,32 @@ function ThreadInput({ noteId, onAdd, parseTags: parseTagsFn }) {
         )}
       </div>
 
-      <div className="text-[11px] text-gray-500 whitespace-nowrap overflow-x-auto">
-        Tags: <span className="font-mono bg-gray-100 px-1 rounded">/a</span> action,
-        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/n</span> note,
-        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/u</span> urgent,
-        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/d 3</span> due in 3 days,
-        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/d 2024-12-31</span> due on date,
-        <span className="font-mono bg-gray-100 px-1 rounded ml-1">/c</span> comment
+      <div className="text-[11px] text-gray-500 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-medium text-gray-500">Tags:</span>
+        <span className="flex items-center gap-1">
+          <span className="font-mono bg-gray-100 px-1 rounded">/a</span>
+          <span>action</span>
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="font-mono bg-gray-100 px-1 rounded">/n</span>
+          <span>note</span>
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="font-mono bg-gray-100 px-1 rounded">/u</span>
+          <span>urgent</span>
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="font-mono bg-gray-100 px-1 rounded">/d 3</span>
+          <span>due in 3 days</span>
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="font-mono bg-gray-100 px-1 rounded">/d 2024-12-31</span>
+          <span>due on date</span>
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="font-mono bg-gray-100 px-1 rounded">/c</span>
+          <span>comment</span>
+        </span>
       </div>
 
       {showTags && (
@@ -2478,7 +2549,7 @@ function SessionModal({ projects, people, onClose, onSave, onAddPerson }) {
 }
 
 // Note Modal
-function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave }) {
+function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave, onDelete }) {
   const availableNoteTypes = noteTypes.filter(t => t.id !== 'deliverable');
   const fallbackType = note?.type && availableNoteTypes.some(t => t.id === note.type)
     ? note.type
@@ -2611,13 +2682,24 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
               <span className="text-sm font-medium text-gray-700">Mark as Urgent</span>
             </label>
           </div>
-          <div className="flex gap-2 justify-end">
-            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
-              Cancel
-            </button>
-            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
-              {note?.id ? 'Save' : 'Create'}
-            </button>
+          <div className="flex flex-wrap gap-2 items-center justify-between">
+            {note?.id ? (
+              <button
+                type="button"
+                onClick={() => onDelete?.(note.id)}
+                className="px-4 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+              >
+                Delete
+              </button>
+            ) : <span />}
+            <div className="flex gap-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                Cancel
+              </button>
+              <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
+                {note?.id ? 'Save' : 'Create'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

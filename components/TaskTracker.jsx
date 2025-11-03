@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Plus, Filter, Folder, Calendar, Clock, Users, CheckCircle, Circle, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square } from 'lucide-react';
+import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, X, Edit2, Trash2, Play, Square } from 'lucide-react';
 
 // Utility functions
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -64,7 +64,6 @@ export default function TaskTracker() {
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
-  const [expandedNotes, setExpandedNotes] = useState(new Set());
   const [showComments, setShowComments] = useState(new Set());
   // const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showProjectAutocomplete, setShowProjectAutocomplete] = useState(false);
@@ -102,7 +101,8 @@ export default function TaskTracker() {
     const sanitizedComments = Array.isArray(raw.comments)
       ? raw.comments.filter(Boolean).map(comment => ({
           ...comment,
-          sessionId: comment.sessionId || null
+          sessionId: comment.sessionId || null,
+          type: comment.type || 'note'
         }))
       : [];
     return {
@@ -652,30 +652,48 @@ Rules:
   };
 
   // Add comment
-  const addComment = (noteId, content) => {
-    const newComment = {
-      id: generateId(),
-      noteId,
-      content,
-      sessionId: activeSession?.id || null,
-      createdAt: Date.now()
-    };
-    setData(prev => ({
-      ...prev,
-      comments: [...prev.comments, newComment]
-    }));
+  const addComment = (noteId, content, commentType = 'note') => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    setData(prev => {
+      const parent = prev.notes.find(n => n.id === noteId);
+      const newComment = {
+        id: generateId(),
+        noteId,
+        content: trimmed,
+        type: commentType,
+        sessionId: activeSession?.id || parent?.sessionId || null,
+        createdAt: Date.now()
+      };
+      return {
+        ...prev,
+        comments: [...prev.comments, newComment]
+      };
+    });
   };
 
-  // Toggle note expansion
-  const toggleExpanded = (noteId) => {
-    setExpandedNotes(prev => {
-      const next = new Set(prev);
-      if (next.has(noteId)) {
-        next.delete(noteId);
-      } else {
-        next.add(noteId);
-      }
-      return next;
+  const addSubItem = (noteId, content, subType = 'to_do') => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    setData(prev => {
+      const parent = prev.notes.find(n => n.id === noteId);
+      const newNote = {
+        id: generateId(),
+        parentId: noteId,
+        projectId: parent?.projectId || null,
+        sessionId: activeSession?.id || parent?.sessionId || null,
+        type: subType,
+        content: trimmed,
+        dueDate: null,
+        status: 'not_started',
+        isUrgent: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      return {
+        ...prev,
+        notes: [...prev.notes, newNote]
+      };
     });
   };
 
@@ -782,9 +800,8 @@ Rules:
   const renderNote = (note, depth = 0) => {
     const project = data.projects.find(p => p.id === note.projectId);
     const session = data.sessions.find(s => s.id === note.sessionId);
-    const children = data.notes.filter(n => n.parentId === note.id);
+    const childNotes = data.notes.filter(n => n.parentId === note.id);
     const noteComments = data.comments.filter(c => c.noteId === note.id);
-    const isExpanded = expandedNotes.has(note.id);
     const showCommentsSection = showComments.has(note.id);
     const typeDefinition = data.noteTypes.find(t => t.id === note.type);
     const typeLabel = typeDefinition
@@ -806,17 +823,119 @@ Rules:
     const projectActive = project ? isTagActive('project', project.id) : false;
     const sessionTarget = selectedSessionFilter || activeSession?.id;
     const sessionActive = session ? filterBy === 'session' && sessionTarget === session.id : false;
+    const threadItems = [
+      ...childNotes.map(child => ({ kind: 'note', item: child })),
+      ...noteComments.map(comment => ({ kind: 'comment', item: comment }))
+    ].sort((a, b) => (a.item.createdAt || 0) - (b.item.createdAt || 0));
+    const threadCount = threadItems.length;
+
+    const renderThreadEntry = (entry) => {
+      if (entry.kind === 'note') {
+        const child = entry.item;
+        const childTypeDefinition = data.noteTypes.find(t => t.id === child.type);
+        const childTypeLabel = childTypeDefinition ? childTypeDefinition.name : toTitleCase(child.type || 'Note');
+        const childTypeClasses = child.type === 'to_do'
+          ? 'bg-blue-100 text-blue-700'
+          : 'bg-gray-100 text-gray-700';
+        const childTypeActive = isTagActive('type', child.type);
+        const childStatusLabel = STATUS_LABELS[child.status] || STATUS_LABELS.not_started;
+        const childStatusClasses = child.status === 'done'
+          ? 'bg-green-100 text-green-700'
+          : child.status === 'in_progress'
+            ? 'bg-yellow-100 text-yellow-700'
+            : 'bg-gray-100 text-gray-600';
+        const childStatusActive = isTagActive('status', child.status);
+        const childSession = data.sessions.find(s => s.id === child.sessionId);
+        return (
+          <div key={`note-${child.id}`} className="bg-gray-50 rounded p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleTagFilter('type', child.type, childTypeLabel)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${childTypeClasses} hover:opacity-90 ${childTypeActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
+                >
+                  {childTypeLabel}
+                </button>
+                {child.isUrgent && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                    <AlertCircle size={12} /> Urgent
+                  </span>
+                )}
+                {childSession && (
+                  <button
+                    type="button"
+                    onClick={() => handleSessionFilter(childSession.id)}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 ${filterBy === 'session' && sessionTarget === childSession.id ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
+                  >
+                    <Clock size={12} /> {childSession.title}
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={(event) => handleStatusInteraction(event, child, childStatusLabel)}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${childStatusClasses} hover:opacity-90 ${childStatusActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
+                title="Click to cycle status · Cmd/Ctrl+Click to filter"
+              >
+                {childStatusLabel}
+              </button>
+            </div>
+            <p className="text-sm text-gray-700 mt-2">{child.content}</p>
+            <div className="mt-2 flex items-center justify-between text-xs text-gray-500 flex-wrap gap-2">
+              <span>{formatDate(child.createdAt)}</span>
+              {child.dueDate && (
+                <span className="flex items-center gap-1">
+                  <Calendar size={12} /> Due: {formatDateShort(child.dueDate)}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      const comment = entry.item;
+      const commentSession = data.sessions.find(s => s.id === comment.sessionId);
+      const commentTypeLabel = toTitleCase(comment.type || 'Note');
+      const commentTypeClasses = comment.type === 'to_do'
+        ? 'bg-blue-100 text-blue-700'
+        : 'bg-gray-100 text-gray-700';
+      const commentTypeActive = isTagActive('type', comment.type);
+
+      return (
+        <div key={`comment-${comment.id}`} className="bg-gray-50 rounded p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => handleTagFilter('type', comment.type, commentTypeLabel)}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${commentTypeClasses} hover:opacity-90 ${commentTypeActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
+              >
+                {commentTypeLabel}
+              </button>
+              {commentSession && (
+                <button
+                  type="button"
+                  onClick={() => handleSessionFilter(commentSession.id)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 ${filterBy === 'session' && sessionTarget === commentSession.id ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
+                >
+                  <Clock size={12} /> {commentSession.title}
+                </button>
+              )}
+            </div>
+          </div>
+          <p className="text-sm text-gray-700 mt-2">{comment.content}</p>
+          <div className="mt-2 flex items-center justify-between text-xs text-gray-500 flex-wrap gap-2">
+            <span>{formatDate(comment.createdAt)}</span>
+          </div>
+        </div>
+      );
+    };
     
     return (
       <div key={note.id} className="mb-2" style={{ marginLeft: `${depth * 24}px` }}>
         <div className="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
           <div className="flex items-start gap-3">
-            {children.length > 0 && (
-              <button onClick={() => toggleExpanded(note.id)} className="mt-1 text-gray-400 hover:text-gray-600">
-                {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              </button>
-            )}
-            
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
@@ -834,15 +953,6 @@ Rules:
                         <AlertCircle size={12} /> Urgent
                       </span>
                     )}
-                    
-                    <button
-                      type="button"
-                      onClick={(event) => handleStatusInteraction(event, note, statusLabel)}
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${statusClasses} hover:opacity-90 ${statusActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
-                      title="Click to cycle status · Cmd/Ctrl+Click to filter"
-                    >
-                      {statusLabel}
-                    </button>
                     
                     {project && (
                       <button
@@ -865,7 +975,17 @@ Rules:
                     )}
                   </div>
                   
-                  <p className="text-gray-800 mb-1">{note.content}</p>
+                  <div className="flex items-start justify-between gap-3 mb-1">
+                    <p className="text-gray-800 flex-1">{note.content}</p>
+                    <button
+                      type="button"
+                      onClick={(event) => handleStatusInteraction(event, note, statusLabel)}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${statusClasses} hover:opacity-90 ${statusActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
+                      title="Click to cycle status · Cmd/Ctrl+Click to filter"
+                    >
+                      {statusLabel}
+                    </button>
+                  </div>
                   
                   <div className="flex items-center gap-3 text-xs text-gray-500">
                     <span>{formatDate(note.createdAt)}</span>
@@ -874,7 +994,7 @@ Rules:
                         <Calendar size={12} /> Due: {formatDateShort(note.dueDate)}
                       </span>
                     )}
-                    {noteComments.length > 0 && (
+                    {threadCount > 0 && (
                       <button 
                         onClick={() => {
                           const next = new Set(showComments);
@@ -887,7 +1007,7 @@ Rules:
                         }}
                         className="flex items-center gap-1 hover:text-gray-700"
                       >
-                        <MessageSquare size={12} /> {noteComments.length}
+                        <MessageSquare size={12} /> {threadCount}
                       </button>
                     )}
                   </div>
@@ -914,38 +1034,20 @@ Rules:
               
               {showCommentsSection && (
                 <div className="mt-3 pt-3 border-t border-gray-100">
-                  <div className="space-y-2 mb-2">
-                    {noteComments.map(comment => {
-                      const commentSession = data.sessions.find(s => s.id === comment.sessionId);
-                      return (
-                        <div key={comment.id} className="bg-gray-50 rounded p-2">
-                          <p className="text-sm text-gray-700">{comment.content}</p>
-                          <div className="mt-1 flex items-center justify-between text-xs text-gray-500 gap-2 flex-wrap">
-                            <span>{formatDate(comment.createdAt)}</span>
-                            {commentSession && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full">
-                                <Clock size={12} /> {commentSession.title}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <CommentInput noteId={note.id} onAdd={addComment} />
+                  {threadCount > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {threadItems.map(renderThreadEntry)}
+                    </div>
+                  )}
+                  <CommentInput
+                    noteId={note.id}
+                    onAddNote={(id, content) => addComment(id, content, 'note')}
+                    onAddAction={(id, content) => addSubItem(id, content, 'to_do')}
+                  />
                 </div>
               )}
               
               <div className="mt-2 flex gap-2">
-                <button
-                  onClick={() => {
-                    setEditingNote({ parentId: note.id, projectId: note.projectId, status: 'not_started' });
-                    setShowNoteModal(true);
-                  }}
-                  className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                >
-                  <Plus size={12} /> Add sub-item
-                </button>
                 {!showCommentsSection && (
                   <button
                     onClick={() => {
@@ -962,12 +1064,6 @@ Rules:
             </div>
           </div>
         </div>
-        
-        {isExpanded && children.length > 0 && (
-          <div className="mt-2">
-            {children.map(child => renderNote(child, depth + 1))}
-          </div>
-        )}
       </div>
     );
   };
@@ -1355,32 +1451,55 @@ Rules:
 }
 
 // Comment Input Component
-function CommentInput({ noteId, onAdd }) {
-  const [comment, setComment] = useState('');
+function CommentInput({ noteId, onAddNote, onAddAction }) {
+  const [content, setContent] = useState('');
   
-  const handleAdd = () => {
-    if (comment.trim()) {
-      onAdd(noteId, comment);
-      setComment('');
+  const handleAdd = (mode) => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    if (mode === 'action') {
+      onAddAction(noteId, trimmed);
+    } else {
+      onAddNote(noteId, trimmed);
+    }
+    setContent('');
+  };
+  
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleAdd('note');
     }
   };
   
+  const disabled = content.trim().length === 0;
+  
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
       <input
         type="text"
-        value={comment}
-        onChange={(e) => setComment(e.target.value)}
-        onKeyPress={(e) => e.key === 'Enter' && handleAdd()}
-        placeholder="Add a comment..."
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Add a note or action..."
         className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
-      <button
-        onClick={handleAdd}
-        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded"
-      >
-        Add
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={() => handleAdd('note')}
+          disabled={disabled}
+          className={`px-3 py-1.5 rounded text-sm font-medium ${disabled ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+        >
+          Add note
+        </button>
+        <button
+          onClick={() => handleAdd('action')}
+          disabled={disabled}
+          className={`px-3 py-1.5 rounded text-sm font-medium ${disabled ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+        >
+          Add action
+        </button>
+      </div>
     </div>
   );
 }

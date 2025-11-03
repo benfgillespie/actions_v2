@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, X, Edit2, Trash2, Play, Square } from 'lucide-react';
+import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square } from 'lucide-react';
 
 // Utility functions
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -35,6 +35,21 @@ const normalizeStatus = (value) => (
   STATUS_ORDER.includes(value) ? value : 'not_started'
 );
 
+const COLUMN_DEFS = [
+  { id: 'type', label: 'Type' },
+  { id: 'project', label: 'Project' },
+  { id: 'session', label: 'Session' },
+  { id: 'dueDate', label: 'Due Date' },
+  { id: 'urgent', label: 'Urgent' },
+  { id: 'status', label: 'Status' },
+  { id: 'actions', label: 'Actions', alwaysVisible: true }
+];
+
+const INITIAL_COLUMN_VISIBILITY = COLUMN_DEFS.reduce((acc, column) => {
+  acc[column.id] = true;
+  return acc;
+}, {});
+
 // Initial data structure
 const initialData = {
   projects: [],
@@ -65,11 +80,14 @@ export default function TaskTracker() {
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
   const [showComments, setShowComments] = useState(new Set());
+  const [collapsedNotes, setCollapsedNotes] = useState(new Set());
   // const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showProjectAutocomplete, setShowProjectAutocomplete] = useState(false);
   const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = useState(0);
   const [appliedTags, setAppliedTags] = useState({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
   const [tagFilter, setTagFilter] = useState(null);
+  const [columnVisibility, setColumnVisibility] = useState(() => ({ ...INITIAL_COLUMN_VISIBILITY }));
+  const [showColumnMenu, setShowColumnMenu] = useState(false);
 
   const ensureDefaultNoteTypes = (types = []) => {
     const baseList = Array.isArray(types) ? types.filter(t => t && t.id && t.id !== 'deliverable') : [];
@@ -239,6 +257,50 @@ Rules:
     }
     clearTagFilter();
   };
+
+  const toggleCollapsed = (noteId) => {
+    setCollapsedNotes(prev => {
+      const next = new Set(prev);
+      if (next.has(noteId)) {
+        next.delete(noteId);
+      } else {
+        next.add(noteId);
+      }
+      return next;
+    });
+  };
+
+  const expandNote = (noteId) => {
+    setCollapsedNotes(prev => {
+      if (!prev.has(noteId)) return prev;
+      const next = new Set(prev);
+      next.delete(noteId);
+      return next;
+    });
+  };
+
+  const toggleComments = (noteId) => {
+    setShowComments(prev => {
+      const next = new Set(prev);
+      if (next.has(noteId)) {
+        next.delete(noteId);
+      } else {
+        next.add(noteId);
+      }
+      return next;
+    });
+  };
+
+  const toggleColumnVisibility = (columnId) => {
+    const column = COLUMN_DEFS.find(col => col.id === columnId);
+    if (!column || column.alwaysVisible) return;
+    setColumnVisibility(prev => ({
+      ...prev,
+      [columnId]: !prev[columnId]
+    }));
+  };
+
+  const isColumnVisible = (column) => column.alwaysVisible || columnVisibility[column.id];
 
   // Parse tags from note content
   const parseTags = (text) => {
@@ -796,279 +858,297 @@ Rules:
     return { 'All Items': filtered };
   };
 
-  // Render note recursively
-  const renderNote = (note, depth = 0) => {
-    const project = data.projects.find(p => p.id === note.projectId);
-    const session = data.sessions.find(s => s.id === note.sessionId);
-    const childNotes = data.notes.filter(n => n.parentId === note.id);
-    const noteComments = data.comments.filter(c => c.noteId === note.id);
-    const showCommentsSection = showComments.has(note.id);
-    const typeDefinition = data.noteTypes.find(t => t.id === note.type);
-    const typeLabel = typeDefinition
-      ? typeDefinition.name
-      : note.type
-        ? toTitleCase(note.type)
-        : 'Note';
-    const typeClasses = note.type === 'to_do'
-      ? 'bg-blue-100 text-blue-700'
-      : 'bg-gray-100 text-gray-700';
-    const statusLabel = STATUS_LABELS[note.status] || STATUS_LABELS.not_started;
-    const statusClasses = note.status === 'done'
-      ? 'bg-green-100 text-green-700'
-      : note.status === 'in_progress'
-        ? 'bg-yellow-100 text-yellow-700'
-        : 'bg-gray-100 text-gray-600';
-    const typeActive = isTagActive('type', note.type);
-    const statusActive = note.status ? isTagActive('status', note.status) : false;
-    const projectActive = project ? isTagActive('project', project.id) : false;
-    const sessionTarget = selectedSessionFilter || activeSession?.id;
-    const sessionActive = session ? filterBy === 'session' && sessionTarget === session.id : false;
-    const threadItems = [
-      ...childNotes.map(child => ({ kind: 'note', item: child })),
-      ...noteComments.map(comment => ({ kind: 'comment', item: comment }))
-    ].sort((a, b) => (a.item.createdAt || 0) - (b.item.createdAt || 0));
-    const threadCount = threadItems.length;
-
-    const renderThreadEntry = (entry) => {
-      if (entry.kind === 'note') {
-        const child = entry.item;
-        const childTypeDefinition = data.noteTypes.find(t => t.id === child.type);
-        const childTypeLabel = childTypeDefinition ? childTypeDefinition.name : toTitleCase(child.type || 'Note');
-        const childTypeClasses = child.type === 'to_do'
-          ? 'bg-blue-100 text-blue-700'
-          : 'bg-gray-100 text-gray-700';
-        const childTypeActive = isTagActive('type', child.type);
-        const childStatusLabel = STATUS_LABELS[child.status] || STATUS_LABELS.not_started;
-        const childStatusClasses = child.status === 'done'
-          ? 'bg-green-100 text-green-700'
-          : child.status === 'in_progress'
-            ? 'bg-yellow-100 text-yellow-700'
-            : 'bg-gray-100 text-gray-600';
-        const childStatusActive = isTagActive('status', child.status);
-        const childSession = data.sessions.find(s => s.id === child.sessionId);
-        return (
-          <div key={`note-${child.id}`} className="bg-gray-50 rounded p-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => handleTagFilter('type', child.type, childTypeLabel)}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${childTypeClasses} hover:opacity-90 ${childTypeActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
-                >
-                  {childTypeLabel}
-                </button>
-                {child.isUrgent && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                    <AlertCircle size={12} /> Urgent
-                  </span>
-                )}
-                {childSession && (
-                  <button
-                    type="button"
-                    onClick={() => handleSessionFilter(childSession.id)}
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 ${filterBy === 'session' && sessionTarget === childSession.id ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
-                  >
-                    <Clock size={12} /> {childSession.title}
-                  </button>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={(event) => handleStatusInteraction(event, child, childStatusLabel)}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${childStatusClasses} hover:opacity-90 ${childStatusActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
-                title="Click to cycle status · Cmd/Ctrl+Click to filter"
-              >
-                {childStatusLabel}
-              </button>
-            </div>
-            <p className="text-sm text-gray-700 mt-2">{child.content}</p>
-            <div className="mt-2 flex items-center justify-between text-xs text-gray-500 flex-wrap gap-2">
-              <span>{formatDate(child.createdAt)}</span>
-              {child.dueDate && (
-                <span className="flex items-center gap-1">
-                  <Calendar size={12} /> Due: {formatDateShort(child.dueDate)}
-                </span>
-              )}
-            </div>
-          </div>
-        );
+  const buildNoteRows = (note, depth = 0) => {
+    const children = data.notes
+      .filter(n => n.parentId === note.id)
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const comments = data.comments
+      .filter(c => c.noteId === note.id)
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const isCollapsed = collapsedNotes.has(note.id);
+    const commentsExpanded = showComments.has(note.id);
+    
+    const rows = [{
+      kind: 'note',
+      note,
+      depth,
+      childCount: children.length,
+      commentCount: comments.length,
+      isCollapsed,
+      commentsExpanded
+    }];
+    
+    if (!isCollapsed) {
+      children.forEach(child => {
+        rows.push(...buildNoteRows(child, depth + 1));
+      });
+      
+      if (commentsExpanded) {
+        comments.forEach(comment => {
+          rows.push({ kind: 'comment', comment, depth: depth + 1 });
+        });
+        rows.push({ kind: 'comment-input', noteId: note.id, depth: depth + 1 });
       }
-
-      const comment = entry.item;
-      const commentSession = data.sessions.find(s => s.id === comment.sessionId);
-      const commentTypeLabel = toTitleCase(comment.type || 'Note');
-      const commentTypeClasses = comment.type === 'to_do'
-        ? 'bg-blue-100 text-blue-700'
-        : 'bg-gray-100 text-gray-700';
-      const commentTypeActive = isTagActive('type', comment.type);
-
+    }
+    
+    return rows;
+  };
+  
+  const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
+    if (row.kind === 'comment-input') {
       return (
-        <div key={`comment-${comment.id}`} className="bg-gray-50 rounded p-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={() => handleTagFilter('type', comment.type, commentTypeLabel)}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${commentTypeClasses} hover:opacity-90 ${commentTypeActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
-              >
-                {commentTypeLabel}
-              </button>
-              {commentSession && (
-                <button
-                  type="button"
-                  onClick={() => handleSessionFilter(commentSession.id)}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 ${filterBy === 'session' && sessionTarget === commentSession.id ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
-                >
-                  <Clock size={12} /> {commentSession.title}
-                </button>
-              )}
-            </div>
-          </div>
-          <p className="text-sm text-gray-700 mt-2">{comment.content}</p>
-          <div className="mt-2 flex items-center justify-between text-xs text-gray-500 flex-wrap gap-2">
-            <span>{formatDate(comment.createdAt)}</span>
+        <div
+          key={`comment-input-${row.noteId}`}
+          className="grid items-start gap-3 px-3 py-2 border-b border-gray-100 bg-gray-50"
+          style={{ gridTemplateColumns: gridTemplateColumns }}
+        >
+          <div
+            className="col-span-full"
+            style={{ gridColumn: '1 / -1', paddingLeft: `${row.depth * 20 + 24}px` }}
+          >
+            <CommentInput
+              noteId={row.noteId}
+              onAddNote={(id, content) => addComment(id, content, 'note')}
+              onAddAction={(id, content) => addSubItem(id, content, 'to_do')}
+            />
           </div>
         </div>
       );
-    };
+    }
     
-    return (
-      <div key={note.id} className="mb-2" style={{ marginLeft: `${depth * 24}px` }}>
-        <div className="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
-          <div className="flex items-start gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <button
-                      type="button"
-                      onClick={() => handleTagFilter('type', note.type, typeLabel)}
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${typeClasses} hover:opacity-90 ${typeActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
-                    >
-                      {typeLabel}
-                    </button>
-                    
-                    {note.isUrgent && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-medium">
-                        <AlertCircle size={12} /> Urgent
-                      </span>
-                    )}
-                    
-                    {project && (
-                      <button
-                        type="button"
-                        onClick={() => handleTagFilter('project', project.id, project.name)}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors ${projectActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
-                      >
-                        <Folder size={12} /> {project.name}
-                      </button>
-                    )}
-                    
-                    {session && (
-                      <button
-                        type="button"
-                        onClick={() => handleSessionFilter(session.id)}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 transition-colors ${sessionActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
-                      >
-                        <Clock size={12} /> {session.title}
-                      </button>
-                    )}
-                  </div>
-                  
-                  <div className="flex items-start justify-between gap-3 mb-1">
-                    <p className="text-gray-800 flex-1">{note.content}</p>
-                    <button
-                      type="button"
-                      onClick={(event) => handleStatusInteraction(event, note, statusLabel)}
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${statusClasses} hover:opacity-90 ${statusActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
-                      title="Click to cycle status · Cmd/Ctrl+Click to filter"
-                    >
-                      {statusLabel}
-                    </button>
-                  </div>
-                  
-                  <div className="flex items-center gap-3 text-xs text-gray-500">
-                    <span>{formatDate(note.createdAt)}</span>
-                    {note.dueDate && (
-                      <span className="flex items-center gap-1">
-                        <Calendar size={12} /> Due: {formatDateShort(note.dueDate)}
-                      </span>
-                    )}
-                    {threadCount > 0 && (
-                      <button 
-                        onClick={() => {
-                          const next = new Set(showComments);
-                          if (next.has(note.id)) {
-                            next.delete(note.id);
-                          } else {
-                            next.add(note.id);
-                          }
-                          setShowComments(next);
-                        }}
-                        className="flex items-center gap-1 hover:text-gray-700"
-                      >
-                        <MessageSquare size={12} /> {threadCount}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                
-                <div className="flex gap-1">
-                  <button 
-                    onClick={() => {
-                      setEditingNote(note);
-                      setShowNoteModal(true);
-                    }}
-                    className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-                  >
-                    <Edit2 size={14} />
-                  </button>
-                  <button 
-                    onClick={() => deleteNote(note.id)}
-                    className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-              
-              {showCommentsSection && (
-                <div className="mt-3 pt-3 border-t border-gray-100">
-                  {threadCount > 0 && (
-                    <div className="space-y-2 mb-3">
-                      {threadItems.map(renderThreadEntry)}
-                    </div>
-                  )}
-                  <CommentInput
-                    noteId={note.id}
-                    onAddNote={(id, content) => addComment(id, content, 'note')}
-                    onAddAction={(id, content) => addSubItem(id, content, 'to_do')}
-                  />
-                </div>
+    const isNoteRow = row.kind === 'note';
+    const note = row.note;
+    const comment = row.comment;
+    const indent = `${row.depth * 20}px`;
+    const rowKey = isNoteRow ? `note-${note.id}` : `comment-${comment.id}`;
+    const project = isNoteRow
+      ? data.projects.find(p => p.id === note.projectId)
+      : null;
+    const noteSession = isNoteRow
+      ? data.sessions.find(s => s.id === note.sessionId)
+      : null;
+    const commentSession = !isNoteRow && comment.sessionId
+      ? data.sessions.find(s => s.id === comment.sessionId)
+      : null;
+    const typeDefinition = isNoteRow
+      ? data.noteTypes.find(t => t.id === note.type)
+      : null;
+    const typeLabel = isNoteRow
+      ? (typeDefinition ? typeDefinition.name : toTitleCase(note.type || 'Note'))
+      : toTitleCase(comment.type || 'Note');
+    const typeValue = typeLabel;
+    const noteStatusLabel = isNoteRow
+      ? STATUS_LABELS[note.status] || STATUS_LABELS.not_started
+      : null;
+    const noteStatusClasses = isNoteRow && note.status === 'done'
+      ? 'bg-green-100 text-green-700'
+      : isNoteRow && note.status === 'in_progress'
+        ? 'bg-yellow-100 text-yellow-700'
+        : 'bg-gray-100 text-gray-600';
+    const statusActive = isNoteRow && note.status ? isTagActive('status', note.status) : false;
+    const sessionTarget = selectedSessionFilter || activeSession?.id;
+    const sessionActive = noteSession ? filterBy === 'session' && sessionTarget === noteSession.id : false;
+    const canCollapse = isNoteRow && (row.childCount > 0 || row.commentCount > 0);
+    const collapseButton = canCollapse ? (
+      <button
+        onClick={() => toggleCollapsed(note.id)}
+        className="text-gray-400 hover:text-gray-600 transition"
+        aria-label={row.isCollapsed ? 'Expand' : 'Collapse'}
+      >
+        {row.isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+      </button>
+    ) : (
+      <span className="w-4 h-4" />
+    );
+    
+    const contentCell = isNoteRow ? (
+      <div className="flex items-center gap-3" style={{ paddingLeft: indent }}>
+        {collapseButton}
+        <div className="flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-sm font-medium text-gray-900">{note.content}</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">{formatDateShort(note.createdAt)}</span>
+              {isNoteRow && (
+                <button
+                  onClick={() => {
+                    if (row.isCollapsed) {
+                      expandNote(note.id);
+                    }
+                    toggleComments(note.id);
+                  }}
+                  className={`text-xs font-medium flex items-center gap-1 transition ${
+                    row.commentsExpanded ? 'text-blue-600' : 'text-gray-400 hover:text-blue-600'
+                  }`}
+                >
+                  <MessageSquare size={14} />
+                  {row.commentCount > 0 ? row.commentCount : '+'}
+                </button>
               )}
-              
-              <div className="mt-2 flex gap-2">
-                {!showCommentsSection && (
-                  <button
-                    onClick={() => {
-                      const next = new Set(showComments);
-                      next.add(note.id);
-                      setShowComments(next);
-                    }}
-                    className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                  >
-                    <MessageSquare size={12} /> Add comment
-                  </button>
-                )}
-              </div>
             </div>
           </div>
         </div>
+      </div>
+    ) : (
+      <div className="flex items-start gap-3 text-sm text-gray-700" style={{ paddingLeft: indent }}>
+        <span className="w-4 h-4 text-gray-400 flex items-center justify-center">
+          <MessageSquare size={14} />
+        </span>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            {commentSession && (
+              <button
+                type="button"
+                onClick={() => handleSessionFilter(commentSession.id)}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 ${filterBy === 'session' && sessionTarget === commentSession.id ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
+              >
+                <Clock size={12} /> {commentSession.title}
+              </button>
+            )}
+          </div>
+          <p className="mt-1 leading-relaxed text-sm text-gray-700">{comment.content}</p>
+          <div className="mt-1 text-xs text-gray-400">{formatDate(comment.createdAt)}</div>
+        </div>
+      </div>
+    );
+    
+    const rowClassName = isNoteRow
+      ? 'grid items-center gap-3 px-3 py-2 border-b border-gray-100 bg-white hover:bg-gray-50 transition'
+      : 'grid items-center gap-3 px-3 py-2 border-b border-gray-100 bg-gray-50';
+    
+    const projectName = project ? project.name : '—';
+    const sessionLabel = isNoteRow
+      ? noteSession?.title || '—'
+      : commentSession?.title || '—';
+    const dueDateValue = isNoteRow && note.dueDate
+      ? formatDateShort(note.dueDate)
+      : '—';
+    const urgentValue = isNoteRow && note.isUrgent
+      ? <span className="inline-flex items-center gap-1 text-xs text-red-600"><AlertCircle size={12} /> Urgent</span>
+      : '—';
+    
+    return (
+      <div
+        key={rowKey}
+        className={rowClassName}
+        style={{ gridTemplateColumns: gridTemplateColumns }}
+      >
+        {contentCell}
+        {visibleColumnsList.map(column => {
+          if (column.id === 'type') {
+            return (
+              <div key={`${rowKey}-type`} className="text-sm text-gray-700">
+                {isNoteRow ? (
+                  <button
+                    type="button"
+                    onClick={() => handleTagFilter('type', note.type, typeLabel)}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 ${isTagActive('type', note.type) ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
+                  >
+                    {typeLabel}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleTagFilter('type', comment.type, typeLabel)}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 ${isTagActive('type', comment.type) ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
+                  >
+                    {typeValue}
+                  </button>
+                )}
+              </div>
+            );
+          }
+          
+          if (column.id === 'project') {
+            return (
+              <div key={`${rowKey}-project`} className="text-sm text-gray-600 truncate">
+                {isNoteRow ? projectName : '—'}
+              </div>
+            );
+          }
+          
+          if (column.id === 'session') {
+            return (
+              <div key={`${rowKey}-session`} className="text-sm text-gray-600 truncate">
+                {sessionLabel}
+              </div>
+            );
+          }
+          
+          if (column.id === 'dueDate') {
+            return (
+              <div key={`${rowKey}-due`} className="text-sm text-gray-600">
+                {dueDateValue}
+              </div>
+            );
+          }
+          
+          if (column.id === 'urgent') {
+            return (
+              <div key={`${rowKey}-urgent`} className="text-sm text-gray-600">
+                {urgentValue}
+              </div>
+            );
+          }
+          
+          if (column.id === 'status') {
+            return (
+              <div key={`${rowKey}-status`} className="flex items-center">
+                {isNoteRow ? (
+                  <button
+                    type="button"
+                    onClick={(event) => handleStatusInteraction(event, note, noteStatusLabel)}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition ${noteStatusClasses} hover:opacity-90 ${statusActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
+                    title="Click to cycle status · Cmd/Ctrl+Click to filter"
+                  >
+                    {noteStatusLabel}
+                  </button>
+                ) : (
+                  <span className="text-gray-300 text-sm">—</span>
+                )}
+              </div>
+            );
+          }
+          
+          if (column.id === 'actions') {
+            return (
+              <div key={`${rowKey}-actions`} className="flex items-center gap-1 justify-end">
+                {isNoteRow ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        setEditingNote(note);
+                        setShowNoteModal(true);
+                      }}
+                      className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                      aria-label="Edit"
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                    <button
+                      onClick={() => deleteNote(note.id)}
+                      className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                      aria-label="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-gray-300 text-sm">—</span>
+                )}
+              </div>
+            );
+          }
+          
+          return null;
+        })}
       </div>
     );
   };
 
   const groupedNotes = getGroupedNotes();
+  const visibleColumns = COLUMN_DEFS.filter(isColumnVisible);
+  const gridTemplateColumns = `minmax(320px, 2fr) ${visibleColumns.map(() => 'minmax(120px, auto)').join(' ')}`;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1283,6 +1363,37 @@ Rules:
             </button>
             
             <div className="flex gap-2 ml-auto flex-wrap items-center">
+              <div className="relative">
+                <button
+                  onClick={() => setShowColumnMenu(prev => !prev)}
+                  className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+                >
+                  Columns
+                </button>
+                {showColumnMenu && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-20 p-3 space-y-2">
+                    {COLUMN_DEFS.map(column => (
+                      <label key={column.id} className="flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          className="rounded"
+                          checked={isColumnVisible(column)}
+                          disabled={column.alwaysVisible}
+                          onChange={() => toggleColumnVisibility(column.id)}
+                        />
+                        <span className={column.alwaysVisible ? 'text-gray-400' : ''}>{column.label}</span>
+                      </label>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setShowColumnMenu(false)}
+                      className="text-xs text-gray-500 hover:text-gray-700"
+                    >
+                      Close
+                    </button>
+                  </div>
+                )}
+              </div>
               <select
                 value={filterBy}
                 onChange={(e) => {
@@ -1388,8 +1499,21 @@ Rules:
               {groupBy !== 'none' && (
                 <h2 className="text-lg font-semibold text-gray-700 mb-3">{groupName}</h2>
               )}
-              <div className="space-y-2">
-                {notes.map(note => renderNote(note))}
+              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                <div
+                  className="grid items-center gap-3 px-3 py-2 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-600"
+                  style={{ gridTemplateColumns }}
+                >
+                  <div>Item</div>
+                  {visibleColumns.map(column => (
+                    <div key={`header-${column.id}`} className="truncate">
+                      {column.label}
+                    </div>
+                  ))}
+                </div>
+                {notes
+                  .flatMap(note => buildNoteRows(note))
+                  .map(row => renderRow(row, gridTemplateColumns, visibleColumns))}
               </div>
             </div>
           )

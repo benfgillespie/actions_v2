@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square } from 'lucide-react';
+import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square, ArrowUpDown } from 'lucide-react';
 
 // Utility functions
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -119,6 +119,7 @@ export default function TaskTracker() {
   const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = useState(0);
   const [appliedTags, setAppliedTags] = useState({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
   const [tagFilter, setTagFilter] = useState(null);
+  const [sortConfig, setSortConfig] = useState({ columnId: null, direction: 'asc' });
   const [columnVisibility, setColumnVisibility] = useState(() => ({ ...INITIAL_COLUMN_VISIBILITY }));
   const [columnOrder, setColumnOrder] = useState(() => COLUMN_DEFS.map(col => col.id));
   const [columnWidths, setColumnWidths] = useState(() => COLUMN_DEFS.reduce((acc, column) => {
@@ -511,6 +512,19 @@ Rules:
 
   const isColumnVisible = (column) => column.alwaysVisible || columnVisibility[column.id];
 
+  const handleSort = (columnId) => {
+    if (columnId === 'actions') return;
+    setSortConfig(prev => {
+      if (prev.columnId !== columnId) {
+        return { columnId, direction: 'asc' };
+      }
+      if (prev.direction === 'asc') {
+        return { columnId, direction: 'desc' };
+      }
+      return { columnId: null, direction: 'asc' };
+    });
+  };
+
   const orderedColumns = useMemo(() => {
     const prioritized = columnOrder
       .map(id => COLUMN_DEFS.find(col => col.id === id))
@@ -606,6 +620,31 @@ Rules:
     document.addEventListener('mousemove', handleColumnResizeMouseMove);
     document.addEventListener('mouseup', handleColumnResizeMouseUp);
   }, [columnWidths, itemColumnWidth, handleColumnResizeMouseMove, handleColumnResizeMouseUp]);
+
+  const getSortValue = (note, columnId) => {
+    switch (columnId) {
+      case 'type':
+        return note.type || '';
+      case 'project': {
+        const project = data.projects.find(p => p.id === note.projectId);
+        return project ? project.name : '';
+      }
+      case 'session': {
+        const session = data.sessions.find(s => s.id === note.sessionId);
+        return session ? session.title : '';
+      }
+      case 'dueDate':
+        return note.dueDate || 0;
+      case 'urgent':
+        return note.isUrgent ? 1 : 0;
+      case 'status':
+        return STATUS_ORDER.indexOf(note.status) ?? 0;
+      case 'createdAt':
+        return note.createdAt || 0;
+      default:
+        return note.createdAt || 0;
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -1193,9 +1232,17 @@ Rules:
       }
     });
 
-    const topLevel = allNotes
-      .filter(n => !n.parentId && visibleNotes.has(n.id))
-      .sort((a, b) => b.createdAt - a.createdAt);
+    const baseTopLevel = allNotes.filter(n => !n.parentId && visibleNotes.has(n.id));
+    const topLevel = baseTopLevel.sort((a, b) => {
+      if (!sortConfig.columnId) {
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      }
+      const aValue = getSortValue(a, sortConfig.columnId);
+      const bValue = getSortValue(b, sortConfig.columnId);
+      if (aValue === bValue) return 0;
+      const comparison = aValue > bValue ? 1 : -1;
+      return sortConfig.direction === 'asc' ? comparison : -comparison;
+    });
 
     return {
       topLevelNotes: topLevel,
@@ -1548,6 +1595,8 @@ Rules:
                       }}
                       className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
                       aria-label="Edit"
+                    onDragOver={(event) => handleColumnDragOver(event, '__end__')}
+                    onDrop={(event) => handleColumnDrop(event, '__end__')}
                     >
                       <Edit2 size={14} />
                     </button>
@@ -1579,8 +1628,8 @@ Rules:
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-6xl mx-auto">
+      <header className="bg-white border-b border-gray-200 py-4">
+        <div className="mx-auto w-[90%]">
           <h1 className="text-2xl font-bold text-gray-900 mb-4">Task Tracker</h1>
           
           {/* Active Session Banner */}
@@ -1847,7 +1896,7 @@ Rules:
           </div>
           
           {/* Action Bar */}
-          <div className="flex gap-2 mt-4 flex-wrap">
+          <div className="flex flex-wrap gap-2 mt-4">
             <button
               onClick={() => setShowProjectModal(true)}
               className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
@@ -1869,113 +1918,113 @@ Rules:
             >
               <Plus size={16} /> New Item
             </button>
+            <button
+              onClick={() => setShowColumnMenu(true)}
+              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+            >
+              Columns
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2 mt-3">
+            <select
+              value={filterBy}
+              onChange={(e) => {
+                const value = e.target.value;
+                setFilterBy(value);
+                if (value === 'session' && !selectedSessionFilter) {
+                  if (activeSession) {
+                    setSelectedSessionFilter(activeSession.id);
+                  } else if (data.sessions.length > 0) {
+                    setSelectedSessionFilter(data.sessions[data.sessions.length - 1].id);
+                  } else {
+                    setSelectedSessionFilter(SESSION_FILTER_ALL);
+                  }
+                }
+              }}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Items</option>
+              <option value="project">Current Project</option>
+              <option value="urgent">Urgent</option>
+              <option value="due_week">Due This Week</option>
+              <option value="to_do">Active To-Dos</option>
+              <option value="session">Session Origin</option>
+            </select>
             
-            <div className="flex gap-2 ml-auto flex-wrap items-center">
-              <button
-                onClick={() => setShowColumnMenu(true)}
-                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
-              >
-                Columns
-              </button>
+            <select
+              value={groupBy}
+              onChange={(e) => setGroupBy(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="none">No Grouping</option>
+              <option value="project">Group by Project</option>
+              <option value="type">Group by Type</option>
+              <option value="session">Group by Session</option>
+              <option value="due_date">Group by Due Date</option>
+            </select>
+            
+            {data.projects.length > 0 && (
               <select
-                value={filterBy}
+                value={selectedProject || ''}
+                onChange={(e) => setSelectedProject(e.target.value || null)}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Projects</option>
+                {data.projects.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+
+            {data.sessions.length > 0 && (
+              <select
+                value={selectedSessionFilter === SESSION_FILTER_ALL ? 'all' : selectedSessionFilter || ''}
                 onChange={(e) => {
-                  const value = e.target.value;
-                  setFilterBy(value);
-                  if (value === 'session' && !selectedSessionFilter) {
-                    if (activeSession) {
-                      setSelectedSessionFilter(activeSession.id);
-                    } else if (data.sessions.length > 0) {
-                      setSelectedSessionFilter(data.sessions[data.sessions.length - 1].id);
-                    } else {
-                      setSelectedSessionFilter(SESSION_FILTER_ALL);
-                    }
+                  const next = e.target.value;
+                  if (next === 'all') {
+                    setSelectedSessionFilter(SESSION_FILTER_ALL);
+                  } else if (next) {
+                    setSelectedSessionFilter(next);
+                  } else {
+                    setSelectedSessionFilter(null);
                   }
                 }}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={filterBy !== 'session'}
+                className={`px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${filterBy !== 'session' ? 'bg-gray-100 text-gray-500' : ''}`}
               >
-                <option value="all">All Items</option>
-                <option value="project">Current Project</option>
-                <option value="urgent">Urgent</option>
-                <option value="due_week">Due This Week</option>
-                <option value="to_do">Active To-Dos</option>
-                <option value="session">Session Origin</option>
+                <option value="">{activeSession ? 'Active Session' : 'Latest Session'}</option>
+                <option value="all">All Sessions</option>
+                {data.sessions.map(s => (
+                  <option key={s.id} value={s.id}>{s.title}</option>
+                ))}
               </select>
-              
-              <select
-                value={groupBy}
-                onChange={(e) => setGroupBy(e.target.value)}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="none">No Grouping</option>
-                <option value="project">Group by Project</option>
-                <option value="type">Group by Type</option>
-                <option value="session">Group by Session</option>
-                <option value="due_date">Group by Due Date</option>
-              </select>
-              
-              {data.projects.length > 0 && (
-                <select
-                  value={selectedProject || ''}
-                  onChange={(e) => setSelectedProject(e.target.value || null)}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">All Projects</option>
-                  {data.projects.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              )}
+            )}
 
-              {data.sessions.length > 0 && (
-                <select
-                  value={selectedSessionFilter === SESSION_FILTER_ALL ? 'all' : selectedSessionFilter || ''}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    if (next === 'all') {
-                      setSelectedSessionFilter(SESSION_FILTER_ALL);
-                    } else if (next) {
-                      setSelectedSessionFilter(next);
-                    } else {
-                      setSelectedSessionFilter(null);
-                    }
-                  }}
-                  disabled={filterBy !== 'session'}
-                  className={`px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${filterBy !== 'session' ? 'bg-gray-100 text-gray-500' : ''}`}
+            {tagFilter && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded-full text-sm">
+                <span>
+                  {(tagFilter.type === 'project' && 'Project') ||
+                   (tagFilter.type === 'type' && 'Type') ||
+                   (tagFilter.type === 'status' && 'Status') ||
+                   'Tag'}: {tagFilter.label}
+                </span>
+                <button
+                  type="button"
+                  onClick={clearTagFilter}
+                  className="p-0.5 rounded-full hover:bg-blue-200 text-blue-700"
+                  aria-label="Clear tag filter"
                 >
-                  <option value="">{activeSession ? 'Active Session' : 'Latest Session'}</option>
-                  <option value="all">All Sessions</option>
-                  {data.sessions.map(s => (
-                    <option key={s.id} value={s.id}>{s.title}</option>
-                  ))}
-                </select>
-              )}
-
-              {tagFilter && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded-full text-sm">
-                  <span>
-                    {(tagFilter.type === 'project' && 'Project') ||
-                     (tagFilter.type === 'type' && 'Type') ||
-                     (tagFilter.type === 'status' && 'Status') ||
-                     'Tag'}: {tagFilter.label}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={clearTagFilter}
-                    className="p-0.5 rounded-full hover:bg-blue-200 text-blue-700"
-                    aria-label="Clear tag filter"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
-            </div>
+                  <X size={12} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
       
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-6 py-6">
+      <main className="mx-auto w-[90%] py-6">
         {Object.entries(groupedNotes).map(([groupName, notes]) => (
           notes.length > 0 && (
             <div key={groupName} className="mb-6">
@@ -1999,6 +2048,7 @@ Rules:
                       </div>
                       {visibleColumns.map(column => {
                         const draggable = !column.alwaysVisible || column.id !== 'actions';
+                        const isSorted = sortConfig.columnId === column.id;
                         return (
                           <div
                             key={`header-${column.id}`}
@@ -2009,7 +2059,19 @@ Rules:
                             onDrop={(event) => handleColumnDrop(event, column.id)}
                             onDragEnd={handleColumnDragEnd}
                           >
-                            <span>{column.label}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleSort(column.id)}
+                              className={`flex items-center gap-1 text-left text-gray-700 ${column.id === 'actions' ? 'cursor-default' : ''}`}
+                              disabled={column.id === 'actions'}
+                            >
+                              <span>{column.label}</span>
+                              {column.id !== 'actions' && (
+                                <span className="text-gray-400">
+                                  {isSorted ? (sortConfig.direction === 'asc' ? '↑' : '↓') : <ArrowUpDown size={14} />}
+                                </span>
+                              )}
+                            </button>
                             <span
                               className="ml-auto h-4 w-2 cursor-col-resize rounded-full bg-gray-300 hover:bg-gray-500"
                               onMouseDown={(event) => handleColumnResizeMouseDown(event, column.id)}
@@ -2018,11 +2080,6 @@ Rules:
                           </div>
                         );
                       })}
-                      <div
-                        className="h-6"
-                        onDragOver={(event) => handleColumnDragOver(event, '__end__')}
-                        onDrop={(event) => handleColumnDrop(event, '__end__')}
-                      />
                     </div>
                     {notes
                       .flatMap(note => buildNoteRows(note, 0, visibleNotes, matchingNotes))

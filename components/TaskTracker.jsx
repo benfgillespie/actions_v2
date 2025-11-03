@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square } from 'lucide-react';
 
 // Utility functions
@@ -120,6 +120,12 @@ export default function TaskTracker() {
   const [appliedTags, setAppliedTags] = useState({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
   const [tagFilter, setTagFilter] = useState(null);
   const [columnVisibility, setColumnVisibility] = useState(() => ({ ...INITIAL_COLUMN_VISIBILITY }));
+  const [columnOrder, setColumnOrder] = useState(() => COLUMN_DEFS.map(col => col.id));
+  const [columnWidths, setColumnWidths] = useState(() => COLUMN_DEFS.reduce((acc, column) => {
+    acc[column.id] = column.id === 'actions' ? 140 : 160;
+    return acc;
+  }, {}));
+  const [itemColumnWidth, setItemColumnWidth] = useState(420);
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [pendingDueDate, setPendingDueDate] = useState(null);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
@@ -134,6 +140,8 @@ export default function TaskTracker() {
   const lastSavedSnapshotRef = useRef(null);
   const saveTimeoutRef = useRef(null);
   const saveAbortControllerRef = useRef(null);
+  const columnDragIdRef = useRef(null);
+  const columnResizeStateRef = useRef(null);
 
   const ensureDefaultNoteTypes = (types = []) => {
     const baseList = Array.isArray(types) ? types.filter(t => t && t.id && t.id !== 'deliverable') : [];
@@ -354,6 +362,13 @@ export default function TaskTracker() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [showColumnMenu]);
 
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleColumnResizeMouseMove);
+      document.removeEventListener('mouseup', handleColumnResizeMouseUp);
+    };
+  }, [handleColumnResizeMouseMove, handleColumnResizeMouseUp]);
+
   // AI Analysis - Commented out for now
   /*
   const analyzeWithAI = async (content) => {
@@ -502,6 +517,102 @@ Rules:
   };
 
   const isColumnVisible = (column) => column.alwaysVisible || columnVisibility[column.id];
+
+  const orderedColumns = useMemo(() => {
+    const prioritized = columnOrder
+      .map(id => COLUMN_DEFS.find(col => col.id === id))
+      .filter(Boolean);
+    const missing = COLUMN_DEFS.filter(col => !columnOrder.includes(col.id));
+    return [...prioritized, ...missing];
+  }, [columnOrder]);
+
+  const visibleColumns = orderedColumns.filter(isColumnVisible);
+
+  const gridTemplateColumns = useMemo(() => {
+    const primaryWidth = Math.max(240, itemColumnWidth);
+    const otherTemplates = visibleColumns.map(column => `${Math.max(120, columnWidths[column.id] || 160)}px`);
+    return [primaryWidth ? `${primaryWidth}px` : 'minmax(320px, 2fr)', ...otherTemplates].join(' ');
+  }, [visibleColumns, columnWidths, itemColumnWidth]);
+
+  const gridMinWidth = useMemo(() => {
+    const primaryWidth = Math.max(240, itemColumnWidth);
+    const otherWidth = visibleColumns.reduce((sum, column) => sum + Math.max(120, columnWidths[column.id] || 160), 0);
+    return Math.max(640, primaryWidth + otherWidth);
+  }, [visibleColumns, columnWidths, itemColumnWidth]);
+
+  const handleColumnDragStart = (event, columnId) => {
+    columnDragIdRef.current = columnId;
+    event.dataTransfer.effectAllowed = 'move';
+    try {
+      event.dataTransfer.setData('text/plain', columnId);
+    } catch {
+      // ignore for browsers that disallow setting data
+    }
+  };
+
+  const handleColumnDragOver = (event, columnId) => {
+    if (!columnDragIdRef.current || columnDragIdRef.current === columnId) return;
+    event.preventDefault();
+  };
+
+  const handleColumnDrop = (event, columnId) => {
+    event.preventDefault();
+    const sourceId = columnDragIdRef.current;
+    columnDragIdRef.current = null;
+    if (!sourceId) return;
+    const targetId = columnId === '__end__' ? null : columnId;
+    if (targetId === sourceId) return;
+    setColumnOrder(prev => {
+      const next = prev.filter(id => id !== sourceId);
+      const insertIndex = targetId ? next.indexOf(targetId) : next.length;
+      if (insertIndex === -1) {
+        next.push(sourceId);
+      } else {
+        next.splice(insertIndex, 0, sourceId);
+      }
+      return next;
+    });
+  };
+
+  const handleColumnDragEnd = () => {
+    columnDragIdRef.current = null;
+  };
+
+  const handleColumnResizeMouseMove = useCallback((event) => {
+    const state = columnResizeStateRef.current;
+    if (!state) return;
+    const delta = event.clientX - state.startX;
+    const proposed = Math.max(140, state.initialWidth + delta);
+    if (state.columnId === '__item__') {
+      setItemColumnWidth(proposed);
+    } else {
+      setColumnWidths(prev => ({
+        ...prev,
+        [state.columnId]: proposed
+      }));
+    }
+  }, []);
+
+  const handleColumnResizeMouseUp = useCallback(() => {
+    columnResizeStateRef.current = null;
+    document.removeEventListener('mousemove', handleColumnResizeMouseMove);
+    document.removeEventListener('mouseup', handleColumnResizeMouseUp);
+  }, [handleColumnResizeMouseMove]);
+
+  const handleColumnResizeMouseDown = useCallback((event, columnId) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const initialWidth = columnId === '__item__'
+      ? Math.max(240, itemColumnWidth)
+      : Math.max(120, columnWidths[columnId] || 160);
+    columnResizeStateRef.current = {
+      columnId,
+      startX: event.clientX,
+      initialWidth
+    };
+    document.addEventListener('mousemove', handleColumnResizeMouseMove);
+    document.addEventListener('mouseup', handleColumnResizeMouseUp);
+  }, [columnWidths, itemColumnWidth, handleColumnResizeMouseMove, handleColumnResizeMouseUp]);
 
   // Parse tags from note content
   const parseTags = (text) => {
@@ -1188,6 +1299,7 @@ Rules:
   
   const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     if (row.kind === 'comment-input') {
+      const totalColumns = visibleColumnsList.length + 1;
       return (
         <div
           key={`comment-input-${row.noteId}`}
@@ -1196,7 +1308,10 @@ Rules:
         >
           <div
             className="flex items-center gap-2"
-            style={{ paddingLeft: `${row.depth * 20 + 24}px` }}
+            style={{
+              paddingLeft: `${row.depth * 20 + 24}px`,
+              gridColumn: `1 / span ${totalColumns}`
+            }}
           >
             <MessageSquare size={14} className="text-gray-400 flex-shrink-0" />
             <div className="flex items-center gap-2 flex-1">
@@ -1207,9 +1322,6 @@ Rules:
               />
             </div>
           </div>
-          {visibleColumnsList.map(column => (
-            <div key={`comment-input-${row.noteId}-${column.id}`} />
-          ))}
         </div>
       );
     }
@@ -1463,8 +1575,6 @@ Rules:
   const filteredResult = getFilteredNotes();
   const { topLevelNotes, visibleNotes, matchingNotes } = filteredResult;
   const groupedNotes = getGroupedNotes(topLevelNotes);
-  const visibleColumns = COLUMN_DEFS.filter(isColumnVisible);
-  const gridTemplateColumns = `minmax(320px, 2fr) ${visibleColumns.map(() => 'minmax(120px, auto)').join(' ')}`;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1872,21 +1982,53 @@ Rules:
               {groupBy !== 'none' && (
                 <h2 className="text-lg font-semibold text-gray-700 mb-3">{groupName}</h2>
               )}
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div
-                  className="grid items-center gap-3 px-3 py-2 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-600"
-                  style={{ gridTemplateColumns }}
-                >
-                  <div>Item</div>
-                  {visibleColumns.map(column => (
-                    <div key={`header-${column.id}`} className="truncate">
-                      {column.label}
+              <div className="bg-white border border-gray-200 rounded-lg">
+                <div className="overflow-x-auto">
+                  <div style={{ minWidth: `${gridMinWidth}px` }}>
+                    <div
+                      className="grid items-center gap-3 px-3 py-2 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-600 select-none"
+                      style={{ gridTemplateColumns }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span>Item</span>
+                        <span
+                          className="ml-auto h-4 w-2 cursor-col-resize rounded-full bg-gray-300 hover:bg-gray-500"
+                          onMouseDown={(event) => handleColumnResizeMouseDown(event, '__item__')}
+                          role="separator"
+                        />
+                      </div>
+                      {visibleColumns.map(column => {
+                        const draggable = !column.alwaysVisible || column.id !== 'actions';
+                        return (
+                          <div
+                            key={`header-${column.id}`}
+                            className={`flex items-center gap-2 truncate ${draggable ? 'cursor-move' : ''}`}
+                            draggable={draggable}
+                            onDragStart={(event) => draggable && handleColumnDragStart(event, column.id)}
+                            onDragOver={(event) => handleColumnDragOver(event, column.id)}
+                            onDrop={(event) => handleColumnDrop(event, column.id)}
+                            onDragEnd={handleColumnDragEnd}
+                          >
+                            <span>{column.label}</span>
+                            <span
+                              className="ml-auto h-4 w-2 cursor-col-resize rounded-full bg-gray-300 hover:bg-gray-500"
+                              onMouseDown={(event) => handleColumnResizeMouseDown(event, column.id)}
+                              role="separator"
+                            />
+                          </div>
+                        );
+                      })}
+                      <div
+                        className="h-6"
+                        onDragOver={(event) => handleColumnDragOver(event, '__end__')}
+                        onDrop={(event) => handleColumnDrop(event, '__end__')}
+                      />
                     </div>
-                  ))}
+                    {notes
+                      .flatMap(note => buildNoteRows(note, 0, visibleNotes, matchingNotes))
+                      .map(row => renderRow(row, gridTemplateColumns, visibleColumns))}
+                  </div>
                 </div>
-                {notes
-                  .flatMap(note => buildNoteRows(note, 0, visibleNotes, matchingNotes))
-                  .map(row => renderRow(row, gridTemplateColumns, visibleColumns))}
               </div>
             </div>
           )
@@ -2190,7 +2332,7 @@ function ThreadInput({ noteId, onAdd, parseTags: parseTagsFn }) {
 
   return (
     <div className="relative flex flex-col gap-2 w-full" ref={containerRef}>
-      <div className="relative flex items-center gap-2">
+      <div className="relative grid w-full gap-2 grid-cols-[minmax(0,1fr)_auto] items-center">
         <input
           ref={inputRef}
           type="text"
@@ -2283,27 +2425,27 @@ function ThreadInput({ noteId, onAdd, parseTags: parseTagsFn }) {
 
       <div className="text-[11px] text-gray-500 flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="font-medium text-gray-500">Tags:</span>
-        <span className="flex items-center gap-1">
+        <span className="inline-flex items-center gap-1">
           <span className="font-mono bg-gray-100 px-1 rounded">/a</span>
           <span>action</span>
         </span>
-        <span className="flex items-center gap-1">
+        <span className="inline-flex items-center gap-1">
           <span className="font-mono bg-gray-100 px-1 rounded">/n</span>
           <span>note</span>
         </span>
-        <span className="flex items-center gap-1">
+        <span className="inline-flex items-center gap-1">
           <span className="font-mono bg-gray-100 px-1 rounded">/u</span>
           <span>urgent</span>
         </span>
-        <span className="flex items-center gap-1">
+        <span className="inline-flex items-center gap-1">
           <span className="font-mono bg-gray-100 px-1 rounded">/d 3</span>
           <span>due in 3 days</span>
         </span>
-        <span className="flex items-center gap-1">
+        <span className="inline-flex items-center gap-1">
           <span className="font-mono bg-gray-100 px-1 rounded">/d 2024-12-31</span>
           <span>due on date</span>
         </span>
-        <span className="flex items-center gap-1">
+        <span className="inline-flex items-center gap-1">
           <span className="font-mono bg-gray-100 px-1 rounded">/c</span>
           <span>comment</span>
         </span>

@@ -1182,6 +1182,7 @@ Rules:
               <ThreadInput
                 noteId={row.noteId}
                 onAdd={addThreadItem}
+                parseTags={parseTags}
               />
             </div>
           </div>
@@ -1943,7 +1944,7 @@ Rules:
 }
 
 // Thread Input Component
-function ThreadInput({ noteId, onAdd }) {
+function ThreadInput({ noteId, onAdd, parseTags: parseTagsFn }) {
   const [value, setValue] = useState('');
   const [tagState, setTagState] = useState({ type: 'note', isUrgent: false, isComment: false });
   const [pendingDueDate, setPendingDueDate] = useState(null);
@@ -2084,7 +2085,15 @@ function ThreadInput({ noteId, onAdd }) {
   const handleSubmit = () => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    const parsed = parseTags(value);
+    const parsed = parseTagsFn
+      ? parseTagsFn(value)
+      : {
+          content: value,
+          type: 'note',
+          isUrgent: false,
+          isComment: false,
+          dueDate: null
+        };
     const content = parsed.content || trimmed;
     const finalType = tagState.type !== 'note' ? tagState.type : parsed.type || 'note';
     const finalUrgent = tagState.isUrgent || parsed.isUrgent;
@@ -2128,7 +2137,7 @@ function ThreadInput({ noteId, onAdd }) {
   const showTags = tagState.type !== 'note' || tagState.isUrgent || tagState.isComment || !!activeDueDateObj;
 
   return (
-    <div className="relative flex flex-col gap-2 w-full max-w-xs" ref={containerRef}>
+    <div className="relative flex flex-col gap-2 w-full max-w-lg" ref={containerRef}>
       <div className="relative flex items-center gap-2">
         <input
           ref={inputRef}
@@ -2220,7 +2229,7 @@ function ThreadInput({ noteId, onAdd }) {
         )}
       </div>
 
-      <div className="text-[11px] text-gray-500">
+      <div className="text-[11px] text-gray-500 whitespace-nowrap overflow-x-auto">
         Tags: <span className="font-mono bg-gray-100 px-1 rounded">/a</span> action,
         <span className="font-mono bg-gray-100 px-1 rounded ml-1">/n</span> note,
         <span className="font-mono bg-gray-100 px-1 rounded ml-1">/u</span> urgent,

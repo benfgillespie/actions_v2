@@ -16,7 +16,24 @@ const formatDateShort = (timestamp) => {
   return date.toLocaleDateString();
 };
 
+const toTitleCase = (value) => {
+  if (!value || typeof value !== 'string') return '';
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+};
+
 const SESSION_FILTER_ALL = '__ALL__';
+const STATUS_ORDER = ['not_started', 'in_progress', 'done'];
+const STATUS_LABELS = {
+  not_started: 'Not Started',
+  in_progress: 'In Progress',
+  done: 'Done'
+};
+
+const normalizeStatus = (value) => (
+  STATUS_ORDER.includes(value) ? value : 'not_started'
+);
 
 // Initial data structure
 const initialData = {
@@ -25,8 +42,7 @@ const initialData = {
   sessions: [],
   noteTypes: [
     { id: 'note', name: 'Note', isSystem: true },
-    { id: 'to_do', name: 'To Do', isSystem: true },
-    { id: 'deliverable', name: 'Deliverable', isSystem: true }
+    { id: 'to_do', name: 'To Do', isSystem: true }
   ],
   notes: [],
   comments: [],
@@ -56,11 +72,53 @@ export default function TaskTracker() {
   const [appliedTags, setAppliedTags] = useState({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
   const [tagFilter, setTagFilter] = useState(null);
 
+  const ensureDefaultNoteTypes = (types = []) => {
+    const baseList = Array.isArray(types) ? types.filter(t => t && t.id && t.id !== 'deliverable') : [];
+    const existingIds = new Set(baseList.map(t => t.id));
+    initialData.noteTypes.forEach(defaultType => {
+      if (!existingIds.has(defaultType.id)) {
+        baseList.push(defaultType);
+        existingIds.add(defaultType.id);
+      }
+    });
+    return baseList;
+  };
+
+  const sanitizeLoadedData = (raw) => {
+    if (!raw || typeof raw !== 'object') return initialData;
+    const sanitizedNoteTypes = ensureDefaultNoteTypes(raw.noteTypes);
+    const sanitizedNotes = Array.isArray(raw.notes)
+      ? raw.notes
+          .filter(Boolean)
+          .map(note => {
+            const transformed = { ...note };
+            if (transformed.type === 'deliverable') {
+              transformed.type = 'note';
+            }
+            transformed.status = normalizeStatus(transformed.status);
+            return transformed;
+          })
+      : [];
+    const sanitizedComments = Array.isArray(raw.comments)
+      ? raw.comments.filter(Boolean).map(comment => ({
+          ...comment,
+          sessionId: comment.sessionId || null
+        }))
+      : [];
+    return {
+      ...initialData,
+      ...raw,
+      noteTypes: sanitizedNoteTypes,
+      notes: sanitizedNotes,
+      comments: sanitizedComments
+    };
+  };
+
   // Load data from localStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem('taskTrackerData');
     if (saved) {
-      const loadedData = JSON.parse(saved);
+      const loadedData = sanitizeLoadedData(JSON.parse(saved));
       setData(loadedData);
       
       // Check for active session
@@ -105,7 +163,7 @@ Note: "${content}"
 
 Return JSON with these fields:
 {
-  "type": "note" | "to_do" | "deliverable",
+  "type": "note" | "to_do",
   "isUrgent": true | false,
   "dueDate": "YYYY-MM-DD" or null,
   "suggestedContent": "improved version of the note if needed, otherwise same as input"
@@ -113,7 +171,6 @@ Return JSON with these fields:
 
 Rules:
 - Use "to_do" if it's an action item or task
-- Use "deliverable" if it's something to be produced/delivered
 - Use "note" for information, observations, or general notes
 - Mark as urgent if there are words like "urgent", "asap", "critical", "emergency"
 - Extract due dates from phrases like "by Friday", "tomorrow", "next week", "in 3 days"
@@ -223,14 +280,12 @@ Rules:
               tags.dueDate = Date.now() + (days * 24 * 60 * 60 * 1000);
               cleanContent = cleanContent.replace(match[0], '').trim();
             } else {
-              // /d with non-numeric value - treat as deliverable
-              tags.type = 'deliverable';
-              cleanContent = cleanContent.replace(match[0], '').trim();
+              const parsed = Date.parse(value);
+              if (!Number.isNaN(parsed)) {
+                tags.dueDate = parsed;
+                cleanContent = cleanContent.replace(match[0], '').trim();
+              }
             }
-          } else {
-            // /d alone - deliverable
-            tags.type = 'deliverable';
-            cleanContent = cleanContent.replace(match[0], '').trim();
           }
           break;
         case 'n':
@@ -287,18 +342,26 @@ Rules:
       textChanged = true;
     }
     
-    // Check for /d followed by number (due date)
-    const dueDateMatch = newText.match(/\/d\s+(\d+)\s*(?:days?)?(?=\s|$|\/)/i);
-    if (dueDateMatch) {
-      const days = parseInt(dueDateMatch[1]);
-      newTags.dueDate = Date.now() + (days * 24 * 60 * 60 * 1000);
-      newText = newText.replace(/\/d\s+\d+\s*(?:days?)?(?=\s|$|\/)/i, '').trim();
-      textChanged = true;
-    } else if (/\/d(?!\s*\d)(?=\s|$|\/)/i.test(newText)) {
-      // /d without number = deliverable
-      newTags.type = 'deliverable';
-      newText = newText.replace(/\/d(?!\s*\d)(?=\s|$|\/)/i, '').trim();
-      textChanged = true;
+    // Check for /d with absolute date (YYYY-MM-DD)
+    const absoluteDateMatch = newText.match(/\/d\s+(\d{4}-\d{2}-\d{2})(?=\s|$|\/)/i);
+    if (absoluteDateMatch) {
+      const parsed = Date.parse(absoluteDateMatch[1]);
+      if (!Number.isNaN(parsed)) {
+        newTags.dueDate = parsed;
+        newText = newText.replace(/\/d\s+\d{4}-\d{2}-\d{2}(?=\s|$|\/)/i, '').trim();
+        textChanged = true;
+      }
+    }
+    
+    // Check for /d followed by number (due in N days) only if absolute date not applied
+    if (!textChanged) {
+      const dueDateMatch = newText.match(/\/d\s+(\d+)\s*(?:days?)?(?=\s|$|\/)/i);
+      if (dueDateMatch) {
+        const days = parseInt(dueDateMatch[1]);
+        newTags.dueDate = Date.now() + (days * 24 * 60 * 60 * 1000);
+        newText = newText.replace(/\/d\s+\d+\s*(?:days?)?(?=\s|$|\/)/i, '').trim();
+        textChanged = true;
+      }
     }
     
     // Only clean up multiple spaces if we changed the text
@@ -431,7 +494,7 @@ Rules:
       type: appliedTags.type,
       content: quickEntry.trim(),
       dueDate: appliedTags.dueDate,
-      status: appliedTags.type === 'to_do' ? 'not_started' : null,
+      status: 'not_started',
       isUrgent: appliedTags.isUrgent,
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -512,20 +575,29 @@ Rules:
 
   // Add/update note
   const saveNote = (noteData) => {
-    if (editingNote) {
+    const baseStatus = normalizeStatus(noteData.status);
+    if (editingNote?.id) {
       setData(prev => ({
         ...prev,
-        notes: prev.notes.map(n => 
-          n.id === editingNote.id ? { ...n, ...noteData, updatedAt: Date.now() } : n
-        )
+        notes: prev.notes.map(n => {
+          if (n.id !== editingNote.id) return n;
+          return {
+            ...n,
+            ...noteData,
+            status: baseStatus,
+            sessionId: activeSession?.id || n.sessionId || null,
+            updatedAt: Date.now()
+          };
+        })
       }));
-      setEditingNote(null);
     } else {
       const newNote = {
         ...noteData,
         id: generateId(),
-        projectId: selectedProject,
+        parentId: editingNote?.parentId ?? noteData.parentId ?? null,
+        projectId: noteData.projectId || editingNote?.projectId || selectedProject || null,
         sessionId: activeSession?.id || null,
+        status: baseStatus,
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -534,6 +606,34 @@ Rules:
         notes: [...prev.notes, newNote]
       }));
     }
+    setEditingNote(null);
+  };
+
+  const cycleStatus = (note) => {
+    const current = STATUS_ORDER.includes(note.status) ? note.status : 'not_started';
+    const nextStatus = STATUS_ORDER[(STATUS_ORDER.indexOf(current) + 1) % STATUS_ORDER.length];
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(n => {
+        if (n.id !== note.id) return n;
+        return {
+          ...n,
+          status: nextStatus,
+          sessionId: activeSession?.id || n.sessionId || null,
+          updatedAt: Date.now()
+        };
+      })
+    }));
+  };
+
+  const handleStatusInteraction = (event, note, label) => {
+    if (event.metaKey || event.ctrlKey) {
+      event.preventDefault();
+      handleTagFilter('status', note.status, label);
+      return;
+    }
+    event.preventDefault();
+    cycleStatus(note);
   };
 
   // Delete note
@@ -557,6 +657,7 @@ Rules:
       id: generateId(),
       noteId,
       content,
+      sessionId: activeSession?.id || null,
       createdAt: Date.now()
     };
     setData(prev => ({
@@ -641,7 +742,7 @@ Rules:
       const grouped = {};
       filtered.forEach(note => {
         const type = data.noteTypes.find(t => t.id === note.type);
-        const key = type ? type.name : 'Unknown';
+        const key = type ? type.name : toTitleCase(note.type || 'Other');
         if (!grouped[key]) grouped[key] = [];
         grouped[key].push(note);
       });
@@ -686,19 +787,15 @@ Rules:
     const isExpanded = expandedNotes.has(note.id);
     const showCommentsSection = showComments.has(note.id);
     const typeDefinition = data.noteTypes.find(t => t.id === note.type);
-    const typeLabel = typeDefinition ? typeDefinition.name : 'Unknown';
+    const typeLabel = typeDefinition
+      ? typeDefinition.name
+      : note.type
+        ? toTitleCase(note.type)
+        : 'Note';
     const typeClasses = note.type === 'to_do'
       ? 'bg-blue-100 text-blue-700'
-      : note.type === 'deliverable'
-        ? 'bg-purple-100 text-purple-700'
-        : 'bg-gray-100 text-gray-700';
-    const statusLabel = note.status
-      ? note.status === 'not_started'
-        ? 'Not Started'
-        : note.status === 'in_progress'
-          ? 'In Progress'
-          : 'Done'
-      : null;
+      : 'bg-gray-100 text-gray-700';
+    const statusLabel = STATUS_LABELS[note.status] || STATUS_LABELS.not_started;
     const statusClasses = note.status === 'done'
       ? 'bg-green-100 text-green-700'
       : note.status === 'in_progress'
@@ -738,15 +835,14 @@ Rules:
                       </span>
                     )}
                     
-                    {note.status && statusLabel && (
-                      <button
-                        type="button"
-                        onClick={() => handleTagFilter('status', note.status, statusLabel)}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${statusClasses} hover:opacity-90 ${statusActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
-                      >
-                        {statusLabel}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={(event) => handleStatusInteraction(event, note, statusLabel)}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${statusClasses} hover:opacity-90 ${statusActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-white' : ''}`}
+                      title="Click to cycle status · Cmd/Ctrl+Click to filter"
+                    >
+                      {statusLabel}
+                    </button>
                     
                     {project && (
                       <button
@@ -819,12 +915,22 @@ Rules:
               {showCommentsSection && (
                 <div className="mt-3 pt-3 border-t border-gray-100">
                   <div className="space-y-2 mb-2">
-                    {noteComments.map(comment => (
-                      <div key={comment.id} className="bg-gray-50 rounded p-2">
-                        <p className="text-sm text-gray-700">{comment.content}</p>
-                        <span className="text-xs text-gray-500">{formatDate(comment.createdAt)}</span>
-                      </div>
-                    ))}
+                    {noteComments.map(comment => {
+                      const commentSession = data.sessions.find(s => s.id === comment.sessionId);
+                      return (
+                        <div key={comment.id} className="bg-gray-50 rounded p-2">
+                          <p className="text-sm text-gray-700">{comment.content}</p>
+                          <div className="mt-1 flex items-center justify-between text-xs text-gray-500 gap-2 flex-wrap">
+                            <span>{formatDate(comment.createdAt)}</span>
+                            {commentSession && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full">
+                                <Clock size={12} /> {commentSession.title}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                   <CommentInput noteId={note.id} onAdd={addComment} />
                 </div>
@@ -833,7 +939,7 @@ Rules:
               <div className="mt-2 flex gap-2">
                 <button
                   onClick={() => {
-                    setEditingNote({ parentId: note.id, projectId: note.projectId });
+                    setEditingNote({ parentId: note.id, projectId: note.projectId, status: 'not_started' });
                     setShowNoteModal(true);
                   }}
                   className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
@@ -983,10 +1089,10 @@ Rules:
               {/* Help Text - Always visible */}
               <div className="text-xs text-gray-500 mb-2">
                 Tags: <span className="font-mono bg-gray-100 px-1 rounded">/a</span> action, 
-                <span className="font-mono bg-gray-100 px-1 rounded ml-1">/d</span> deliverable, 
                 <span className="font-mono bg-gray-100 px-1 rounded ml-1">/n</span> note, 
                 <span className="font-mono bg-gray-100 px-1 rounded ml-1">/u</span> urgent, 
                 <span className="font-mono bg-gray-100 px-1 rounded ml-1">/d 3</span> due in 3 days, 
+                <span className="font-mono bg-gray-100 px-1 rounded ml-1">/d 2024-12-31</span> due on date, 
                 <span className="font-mono bg-gray-100 px-1 rounded ml-1">/p</span> project
               </div>
               
@@ -997,7 +1103,7 @@ Rules:
                   {appliedTags.type !== 'note' && (
                     <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">
                       <span className="font-medium">
-                        {appliedTags.type === 'to_do' ? 'To Do' : 'Deliverable'}
+                        {appliedTags.type === 'to_do' ? 'To Do' : toTitleCase(appliedTags.type)}
                       </span>
                       <button
                         onClick={() => removeTag('type')}
@@ -1458,11 +1564,15 @@ function SessionModal({ projects, people, onClose, onSave, onAddPerson }) {
 
 // Note Modal
 function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave }) {
+  const availableNoteTypes = noteTypes.filter(t => t.id !== 'deliverable');
+  const fallbackType = note?.type && availableNoteTypes.some(t => t.id === note.type)
+    ? note.type
+    : 'note';
   const [content, setContent] = useState(note?.content || '');
-  const [type, setType] = useState(note?.type || 'note');
+  const [type, setType] = useState(fallbackType);
   const [projectId, setProjectId] = useState(note?.projectId || selectedProject || '');
   const [dueDate, setDueDate] = useState(note?.dueDate ? new Date(note.dueDate).toISOString().slice(0, 16) : '');
-  const [status, setStatus] = useState(note?.status || 'not_started');
+  const [status, setStatus] = useState(normalizeStatus(note?.status));
   const [isUrgent, setIsUrgent] = useState(note?.isUrgent || false);
   
   /* AI Analysis - Commented out for now
@@ -1493,15 +1603,15 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
         type,
         projectId: projectId || null,
         dueDate: dueDate ? new Date(dueDate).getTime() : null,
-        status: type === 'to_do' ? status : null,
+        status: normalizeStatus(status),
         isUrgent
       });
       onClose();
     }
   };
   
-  const showDueDate = type === 'to_do' || type === 'deliverable';
-  const showStatus = type === 'to_do';
+  const showDueDate = type === 'to_do' || !!dueDate;
+  const showStatus = true;
   
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -1530,7 +1640,7 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
               onChange={(e) => setType(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              {noteTypes.map(t => (
+              {availableNoteTypes.map(t => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
@@ -1569,9 +1679,9 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
                 onChange={(e) => setStatus(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="not_started">Not Started</option>
-                <option value="in_progress">In Progress</option>
-                <option value="done">Done</option>
+                {STATUS_ORDER.map(option => (
+                  <option key={option} value={option}>{STATUS_LABELS[option]}</option>
+                ))}
               </select>
             </div>
           )}

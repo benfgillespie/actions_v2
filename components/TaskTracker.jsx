@@ -78,6 +78,28 @@ const COLUMN_DEFS = [
   { id: 'actions', label: 'Actions', alwaysVisible: true }
 ];
 
+const COLUMN_MIN_WIDTHS = {
+  type: 110,
+  project: 140,
+  session: 140,
+  dueDate: 120,
+  urgent: 110,
+  status: 130,
+  createdAt: 130,
+  actions: 72
+};
+
+const COLUMN_DEFAULT_WIDTHS = {
+  type: 140,
+  project: 170,
+  session: 170,
+  dueDate: 140,
+  urgent: 120,
+  status: 150,
+  createdAt: 140,
+  actions: 90
+};
+
 const INITIAL_COLUMN_VISIBILITY = COLUMN_DEFS.reduce((acc, column) => {
   acc[column.id] = true;
   return acc;
@@ -123,10 +145,10 @@ export default function TaskTracker() {
   const [columnVisibility, setColumnVisibility] = useState(() => ({ ...INITIAL_COLUMN_VISIBILITY }));
   const [columnOrder, setColumnOrder] = useState(() => COLUMN_DEFS.map(col => col.id));
   const [columnWidths, setColumnWidths] = useState(() => COLUMN_DEFS.reduce((acc, column) => {
-    acc[column.id] = column.id === 'actions' ? 140 : 160;
+    acc[column.id] = COLUMN_DEFAULT_WIDTHS[column.id] ?? 150;
     return acc;
   }, {}));
-  const [itemColumnWidth, setItemColumnWidth] = useState(420);
+  const [itemColumnWidth, setItemColumnWidth] = useState(380);
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [pendingDueDate, setPendingDueDate] = useState(null);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
@@ -536,14 +558,22 @@ Rules:
   const visibleColumns = orderedColumns.filter(isColumnVisible);
 
   const gridTemplateColumns = useMemo(() => {
-    const primaryWidth = Math.max(240, itemColumnWidth);
-    const otherTemplates = visibleColumns.map(column => `${Math.max(120, columnWidths[column.id] || 160)}px`);
+    const primaryWidth = Math.max(280, itemColumnWidth);
+    const otherTemplates = visibleColumns.map(column => {
+      const minWidth = COLUMN_MIN_WIDTHS[column.id] ?? 120;
+      const storedWidth = columnWidths[column.id] ?? COLUMN_DEFAULT_WIDTHS[column.id] ?? 150;
+      return `${Math.max(minWidth, storedWidth)}px`;
+    });
     return [primaryWidth ? `${primaryWidth}px` : 'minmax(320px, 2fr)', ...otherTemplates].join(' ');
   }, [visibleColumns, columnWidths, itemColumnWidth]);
 
   const gridMinWidth = useMemo(() => {
-    const primaryWidth = Math.max(240, itemColumnWidth);
-    const otherWidth = visibleColumns.reduce((sum, column) => sum + Math.max(120, columnWidths[column.id] || 160), 0);
+    const primaryWidth = Math.max(280, itemColumnWidth);
+    const otherWidth = visibleColumns.reduce((sum, column) => {
+      const minWidth = COLUMN_MIN_WIDTHS[column.id] ?? 120;
+      const storedWidth = columnWidths[column.id] ?? COLUMN_DEFAULT_WIDTHS[column.id] ?? 150;
+      return sum + Math.max(minWidth, storedWidth);
+    }, 0);
     return Math.max(640, primaryWidth + otherWidth);
   }, [visibleColumns, columnWidths, itemColumnWidth]);
 
@@ -589,7 +619,10 @@ Rules:
     const state = columnResizeStateRef.current;
     if (!state) return;
     const delta = event.clientX - state.startX;
-    const proposed = Math.max(140, state.initialWidth + delta);
+    const minWidth = state.columnId === '__item__'
+      ? 280
+      : COLUMN_MIN_WIDTHS[state.columnId] ?? 120;
+    const proposed = Math.max(minWidth, state.initialWidth + delta);
     if (state.columnId === '__item__') {
       setItemColumnWidth(proposed);
     } else {
@@ -610,8 +643,8 @@ Rules:
     event.preventDefault();
     event.stopPropagation();
     const initialWidth = columnId === '__item__'
-      ? Math.max(240, itemColumnWidth)
-      : Math.max(120, columnWidths[columnId] || 160);
+      ? Math.max(280, itemColumnWidth)
+      : Math.max(COLUMN_MIN_WIDTHS[columnId] ?? 120, columnWidths[columnId] ?? COLUMN_DEFAULT_WIDTHS[columnId] ?? 150);
     columnResizeStateRef.current = {
       columnId,
       startX: event.clientX,

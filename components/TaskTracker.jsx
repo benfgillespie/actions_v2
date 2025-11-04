@@ -1955,7 +1955,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
         rowBackgroundClass = depthTintClass;
       }
     }
-    const hoverClass = isNoteRow && !isSelected && !isNoteUrgent ? 'hover:bg-gray-100' : '';
+    let hoverClass = '';
+    if (isNoteRow && !isSelected) {
+      hoverClass = isNoteUrgent ? 'hover:bg-red-100' : 'hover:bg-gray-100';
+    }
     const rowClassName = `grid items-stretch gap-0 border-b border-gray-200 transition-colors ${rowBackgroundClass} ${hoverClass}`;
 
     const selectionCell = (

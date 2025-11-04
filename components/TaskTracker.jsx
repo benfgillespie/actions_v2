@@ -1867,7 +1867,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           
           if (column.id === 'actions') {
             return (
-              <div key={`${rowKey}-actions`} className="flex items-center gap-1 justify-end bg-gray-100 rounded-md px-2 py-1 h-full border border-gray-200">
+              <div
+                key={`${rowKey}-actions`}
+                className="flex items-center gap-2 justify-end bg-gray-100 rounded-md px-3 py-1 h-full w-full border border-gray-200"
+              >
                 {isNoteRow ? (
                   <>
                     <button
@@ -1875,19 +1878,17 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                         setEditingNote(note);
                         setShowNoteModal(true);
                       }}
-                      className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
                       aria-label="Edit"
-                    onDragOver={(event) => handleColumnDragOver(event, '__end__')}
-                    onDrop={(event) => handleColumnDrop(event, '__end__')}
                     >
-                      <Edit2 size={14} />
+                      <Edit2 size={16} />
                     </button>
                     <button
                       onClick={() => deleteNote(note.id)}
-                      className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
                       aria-label="Delete"
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={16} />
                     </button>
                   </>
                 ) : (
@@ -2521,7 +2522,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                       className="grid items-center gap-3 px-3 py-2 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-600 select-none rounded-t-lg"
                       style={{ gridTemplateColumns }}
                     >
-                      <div className="flex items-center justify-center">
+                      <div className="flex items-center justify-center bg-gray-100 rounded-md h-full w-full">
                         <input
                           ref={selectAllRef}
                           type="checkbox"
@@ -2545,12 +2546,13 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                         return (
                           <div
                             key={`header-${column.id}`}
-                            className={`flex items-center gap-2 truncate bg-gray-100 px-2 py-1 rounded-md ${draggable ? 'cursor-move' : ''}`}
+                            className={`flex items-stretch gap-2 bg-gray-100 px-2 py-1 rounded-md ${draggable ? 'cursor-move' : ''}`}
                             draggable={draggable}
                             onDragStart={(event) => draggable && handleColumnDragStart(event, column.id)}
                             onDragOver={(event) => handleColumnDragOver(event, column.id)}
                             onDrop={(event) => handleColumnDrop(event, column.id)}
                             onDragEnd={handleColumnDragEnd}
+                            style={{ width: '100%', height: '100%' }}
                           >
                             <div className="flex flex-col gap-1 w-full">
                               <button

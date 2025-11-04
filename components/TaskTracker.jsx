@@ -1162,6 +1162,21 @@ Rules:
     }));
   };
 
+  const cycleStatus = (note) => {
+    const current = STATUS_ORDER.includes(note.status) ? note.status : STATUS_ORDER[0];
+    const next = STATUS_ORDER[(STATUS_ORDER.indexOf(current) + 1) % STATUS_ORDER.length];
+    updateNoteStatus(note, next);
+  };
+
+  const cycleNoteType = (note) => {
+    const typeIds = data.noteTypes.map(t => t.id).filter(Boolean);
+    if (typeIds.length === 0) return;
+    const currentIndex = typeIds.indexOf(note.type);
+    const safeIndex = currentIndex === -1 ? 0 : currentIndex;
+    const nextType = typeIds[(safeIndex + 1) % typeIds.length];
+    updateNoteType(note, nextType);
+  };
+
   // Delete note
   const deleteNote = (noteId) => {
     const deleteRecursive = (id) => {
@@ -1571,15 +1586,13 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             return (
               <div key={`${rowKey}-type`} className="text-sm text-gray-700">
                 {isNoteRow ? (
-                  <select
-                    value={note.type}
-                    onChange={(e) => updateNoteType(note, e.target.value)}
-                    className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700 border-none focus:outline-none"
+                  <button
+                    type="button"
+                    onClick={() => cycleNoteType(note)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
                   >
-                    {data.noteTypes.map(type => (
-                      <option key={type.id} value={type.id}>{type.name}</option>
-                    ))}
-                  </select>
+                    {typeLabel}
+                  </button>
                 ) : (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
                     {typeValue}
@@ -1625,17 +1638,13 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             return (
               <div key={`${rowKey}-status`} className="flex items-center">
                 {isNoteRow ? (
-                  <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition ${noteStatusClasses}`}>
-                    <select
-                      value={note.status}
-                      onChange={(e) => updateNoteStatus(note, e.target.value)}
-                      className="bg-transparent border-none text-current focus:outline-none cursor-pointer"
-                    >
-                      {STATUS_ORDER.map(option => (
-                        <option key={option} value={option}>{STATUS_LABELS[option]}</option>
-                      ))}
-                    </select>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => cycleStatus(note)}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition ${noteStatusClasses} hover:opacity-90`}
+                  >
+                    {STATUS_LABELS[note.status] || STATUS_LABELS.not_started}
+                  </button>
                 ) : (
                   <span className="text-gray-300 text-sm">—</span>
                 )}

@@ -2068,10 +2068,10 @@ Rules:
                 <div className="overflow-x-auto">
                   <div style={{ minWidth: `${gridMinWidth}px` }}>
                     <div
-                      className="grid items-center gap-3 px-3 py-2 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-600 select-none"
+                      className="grid items-center gap-3 px-3 py-2 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-600 select-none rounded-t-lg"
                       style={{ gridTemplateColumns }}
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 bg-gray-100">
                         <span>Item</span>
                         <span
                           className="ml-auto h-4 w-2 cursor-col-resize rounded-full bg-gray-300 hover:bg-gray-500"
@@ -2085,7 +2085,7 @@ Rules:
                         return (
                           <div
                             key={`header-${column.id}`}
-                            className={`flex items-center gap-2 truncate ${draggable ? 'cursor-move' : ''}`}
+                            className={`flex items-center gap-2 truncate bg-gray-100 ${draggable ? 'cursor-move' : ''}`}
                             draggable={draggable}
                             onDragStart={(event) => draggable && handleColumnDragStart(event, column.id)}
                             onDragOver={(event) => handleColumnDragOver(event, column.id)}
@@ -2095,7 +2095,7 @@ Rules:
                             <button
                               type="button"
                               onClick={() => handleSort(column.id)}
-                              className={`flex items-center gap-1 text-left text-gray-700 ${column.id === 'actions' ? 'cursor-default' : ''}`}
+                              className={`flex items-center gap-1 text-left text-gray-700 bg-transparent ${column.id === 'actions' ? 'cursor-default' : ''}`}
                               disabled={column.id === 'actions'}
                             >
                               <span>{column.label}</span>

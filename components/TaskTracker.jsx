@@ -1605,7 +1605,18 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     const isNoteRow = row.kind === 'note';
     const note = row.note;
     const comment = row.comment;
-    const indent = `${row.depth * 20}px`;
+    const depthLevel = row.depth || 0;
+    const indentPixels = depthLevel * 20;
+    const depthTintPalette = ['bg-white', 'bg-slate-50', 'bg-slate-100'];
+    const depthTintIndex = depthLevel > 0
+      ? ((depthLevel - 1) % (depthTintPalette.length - 1)) + 1
+      : 0;
+    const depthTintClass = depthTintPalette[Math.min(depthTintIndex, depthTintPalette.length - 1)];
+    const guidePalette = ['border-sky-200', 'border-blue-200'];
+    const guideClass = depthLevel > 0 ? guidePalette[(depthLevel - 1) % guidePalette.length] : '';
+    const badgePalette = ['bg-slate-200 text-slate-700', 'bg-sky-200 text-sky-800'];
+    const badgeClass = depthLevel > 0 ? badgePalette[(depthLevel - 1) % badgePalette.length] : '';
+    const childCountBadgeClasses = depthLevel > 0 ? badgeClass : 'bg-slate-200 text-slate-700';
     const rowKey = isNoteRow ? `note-${note.id}` : `comment-${comment.id}`;
     const noteProjectIds = isNoteRow
       ? (Array.isArray(note.projectIds)
@@ -1636,26 +1647,52 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
         ? 'bg-yellow-100 text-yellow-700'
         : 'bg-gray-100 text-gray-600';
     const canCollapse = isNoteRow && (row.childCount > 0 || row.commentCount > 0);
-    const collapseButton = canCollapse ? (
-      <button
-        onClick={() => toggleCollapsed(note.id)}
-        className="text-gray-400 hover:text-gray-600 transition"
-        aria-label={row.isCollapsed ? 'Expand' : 'Collapse'}
-      >
-        {row.isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-      </button>
-    ) : (
-      <span className="w-4 h-4" />
+    const collapseControl = (
+      <div className="flex items-center gap-1 min-w-[2.5rem]">
+        {canCollapse ? (
+          <>
+            <button
+              onClick={() => toggleCollapsed(note.id)}
+              className="text-gray-400 hover:text-gray-600 transition"
+              aria-label={row.isCollapsed ? 'Expand' : 'Collapse'}
+            >
+              {row.isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+            </button>
+            {row.childCount > 0 && (
+              <span className={`inline-flex min-w-[1.5rem] items-center justify-center rounded-full px-2 py-0.5 text-[0.65rem] font-semibold ${childCountBadgeClasses}`}>
+                {row.childCount}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="w-4 h-4" />
+        )}
+      </div>
     );
+    const depthBadge = depthLevel > 0 ? (
+      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[0.65rem] font-semibold ${badgeClass}`}>
+        Sub {depthLevel}
+      </span>
+    ) : null;
     
     const contentCell = (
       <div className={`relative px-4 py-3 ${visibleColumnsList.length > 0 ? 'border-r border-gray-200' : ''}`}>
         {isNoteRow ? (
-          <div className="flex items-start gap-3" style={{ paddingLeft: indent }}>
-            {collapseButton}
+          <div
+            className={`flex items-start gap-3 ${depthLevel > 0 ? `border-l-2 ${guideClass} pl-3` : ''}`}
+            style={depthLevel > 0 ? { marginLeft: `${indentPixels}px` } : undefined}
+          >
+            {collapseControl}
             <div className="flex-1">
               <div className="flex items-start justify-between gap-3">
-                <span className="text-sm font-medium text-gray-900">{note.content}</span>
+                <div className="flex flex-col gap-2 flex-1">
+                  <div className="flex items-start gap-2">
+                    {depthBadge}
+                    <p className="text-sm font-medium text-gray-900 whitespace-pre-wrap flex-1">
+                      {note.content}
+                    </p>
+                  </div>
+                </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-gray-400">{formatDateShort(note.createdAt)}</span>
                   <button
@@ -1677,7 +1714,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             </div>
           </div>
         ) : (
-          <div className="flex items-start gap-3 text-sm text-gray-700" style={{ paddingLeft: indent }}>
+          <div
+            className={`flex items-start gap-3 text-sm text-gray-700 ${depthLevel > 0 ? 'border-l border-slate-300 pl-3' : ''}`}
+            style={depthLevel > 0 ? { marginLeft: `${indentPixels}px` } : undefined}
+          >
             <span className="w-4 h-4 text-gray-400 flex items-center justify-center">
               <MessageSquare size={14} />
             </span>
@@ -1701,17 +1741,19 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     );
 
     const isSelected = isNoteRow ? selectedNoteIds.has(note.id) : false;
-    let rowBackgroundClass = 'bg-gray-50';
+    let rowBackgroundClass = depthLevel > 0 ? depthTintClass : 'bg-gray-50';
     if (isNoteRow) {
       if (isSelected) {
-        rowBackgroundClass = 'bg-blue-50';
+        rowBackgroundClass = 'bg-blue-100';
       } else if (note.isUrgent) {
         rowBackgroundClass = 'bg-red-50';
       } else {
-        rowBackgroundClass = 'bg-white';
+        rowBackgroundClass = depthLevel > 0 ? depthTintClass : 'bg-white';
       }
+    } else if (row.kind === 'comment') {
+      rowBackgroundClass = depthLevel > 0 ? depthTintClass : 'bg-gray-50';
     }
-    const hoverClass = isNoteRow && !isSelected && !note.isUrgent ? 'hover:bg-gray-50' : '';
+    const hoverClass = isNoteRow && !isSelected && !note.isUrgent ? 'hover:bg-slate-100' : '';
     const rowClassName = `grid items-stretch gap-0 border-b border-gray-200 transition-colors ${rowBackgroundClass} ${hoverClass}`;
 
     const selectionCell = (

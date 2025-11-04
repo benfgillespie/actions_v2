@@ -160,8 +160,10 @@ export default function TaskTracker() {
     return startOfMonth(today);
   });
   const quickEntryRef = useRef(null);
+  const quickEntryInputRef = useRef(null);
   const datePickerRef = useRef(null);
   const selectAllRef = useRef(null);
+  const searchInputRef = useRef(null);
   const hasInitializedRef = useRef(false);
   const lastSavedSnapshotRef = useRef(null);
   const saveTimeoutRef = useRef(null);
@@ -2199,6 +2201,46 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     }
   }, [someVisibleSelected]);
 
+  useEffect(() => {
+    const handleGlobalShortcut = (event) => {
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const active = document.activeElement;
+      const isEditable =
+        active &&
+        (active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          active.isContentEditable);
+
+      if (event.key === '/' && !isEditable) {
+        event.preventDefault();
+        if (searchInputRef.current) {
+          searchInputRef.current.focus();
+          searchInputRef.current.select?.();
+        }
+        return;
+      }
+
+      if ((event.key === 'n' || event.key === 'N') && !isEditable) {
+        event.preventDefault();
+        if (quickEntryInputRef.current) {
+          quickEntryInputRef.current.focus();
+          quickEntryInputRef.current.select?.();
+        }
+        return;
+      }
+
+      if ((event.key === 'a' || event.key === 'A') && event.shiftKey && !isEditable) {
+        event.preventDefault();
+        toggleSelectAllVisible();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalShortcut);
+    return () => window.removeEventListener('keydown', handleGlobalShortcut);
+  }, [toggleSelectAllVisible]);
+
   const toggleNoteSelection = (noteId) => {
     setSelectedNoteIds(prev => {
       const next = new Set(prev);
@@ -2211,7 +2253,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     });
   };
 
-  const toggleSelectAllVisible = () => {
+  const toggleSelectAllVisible = useCallback(() => {
     setSelectedNoteIds(prev => {
       const next = new Set(prev);
       if (allVisibleSelected) {
@@ -2221,7 +2263,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       }
       return next;
     });
-  };
+  }, [allVisibleSelected, visibleNoteIds]);
 
   const clearSelection = () => {
     setSelectedNoteIds(new Set());
@@ -2381,6 +2423,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             <div className="flex gap-2">
               <div className="flex-1 relative" ref={quickEntryRef}>
                 <input
+                  ref={quickEntryInputRef}
                   type="text"
                   value={quickEntry}
                   onChange={(e) => handleQuickEntryChange(e.target.value)}
@@ -2655,6 +2698,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                 <input
+                  ref={searchInputRef}
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   onKeyDown={(event) => {

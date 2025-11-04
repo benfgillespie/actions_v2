@@ -1607,7 +1607,8 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     const comment = row.comment;
     const depthLevel = row.depth || 0;
     const indentPixels = depthLevel * 20;
-    const depthTintClass = depthLevel > 0 ? 'bg-gray-100' : 'bg-white';
+    const depthTintPalette = ['bg-white', 'bg-gray-50', 'bg-gray-100', 'bg-gray-200'];
+    const depthTintClass = depthTintPalette[Math.min(depthLevel, depthTintPalette.length - 1)];
     const rowKey = isNoteRow ? `note-${note.id}` : `comment-${comment.id}`;
     const noteProjectIds = isNoteRow
       ? (Array.isArray(note.projectIds)
@@ -1654,16 +1655,11 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       <div className={`relative px-4 py-3 ${visibleColumnsList.length > 0 ? 'border-r border-gray-200' : ''}`}>
         {isNoteRow ? (
           <div
-            className="flex items-start gap-3"
-            style={depthLevel > 0 ? { marginLeft: `${indentPixels}px` } : undefined}
+            className={`flex items-start gap-3 ${depthLevel > 0 ? `${depthTintClass} rounded-lg p-3` : ''}`}
+            style={{ marginLeft: `${indentPixels}px` }}
           >
             <div className="flex items-start gap-2">
               {collapseControl}
-              {depthLevel > 0 && (
-                <div className="pt-1 text-gray-400">
-                  {depthLevel % 2 === 1 ? '•' : '○'}
-                </div>
-              )}
             </div>
             <div className="flex-1">
               <div className="flex items-start justify-between gap-3">
@@ -1692,18 +1688,13 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           </div>
         ) : (
           <div
-            className="flex items-start gap-3 text-sm text-gray-700"
-            style={depthLevel > 0 ? { marginLeft: `${indentPixels}px` } : undefined}
+            className={`flex items-start gap-3 text-sm text-gray-700 ${depthLevel > 0 ? `${depthTintClass} rounded-lg p-3` : ''}`}
+            style={{ marginLeft: `${indentPixels}px` }}
           >
             <div className="flex items-start gap-2">
               <span className="w-4 h-4 text-gray-400 flex items-center justify-center">
                 <MessageSquare size={14} />
               </span>
-              {depthLevel > 0 && (
-                <div className="pt-1 text-gray-400">
-                  {depthLevel % 2 === 1 ? '•' : '○'}
-                </div>
-              )}
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2">

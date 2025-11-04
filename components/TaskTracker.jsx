@@ -2571,29 +2571,25 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                           aria-label="Select all visible items"
                         />
                       </div>
-                      <div className={`relative flex flex-col gap-2 px-4 py-3 bg-gray-100 pr-8 ${visibleColumns.length > 0 ? 'border-r border-gray-200' : ''}`}>
-                        <div className="flex justify-center">
+                      <div className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${visibleColumns.length > 0 ? 'border-r border-gray-200' : ''}`}>
+                        <div className="flex items-center gap-3">
                           <button
                             type="button"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 cursor-default"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 cursor-not-allowed"
                             aria-label="Item column"
                             disabled
                           >
                             <GripVertical size={14} aria-hidden="true" />
                           </button>
-                        </div>
-                        <div className="flex items-center justify-between gap-2">
                           <span className="text-gray-700">Item</span>
                         </div>
                         {visibleColumns.length > 0 && (
                           <button
                             type="button"
                             onMouseDown={(event) => handleColumnResizeMouseDown(event, '__item__')}
-                            className="absolute top-0 right-0 h-full w-3 flex items-center justify-center cursor-col-resize group"
+                            className="absolute top-0 right-0 h-full w-2 cursor-col-resize"
                             aria-label="Resize Item column"
-                          >
-                            <span className="pointer-events-none h-full w-px bg-gray-300 group-hover:bg-gray-500" />
-                          </button>
+                          />
                         )}
                       </div>
                       {visibleColumns.map((column, index) => {
@@ -2603,14 +2599,14 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                         return (
                           <div
                             key={`header-${column.id}`}
-                            className={`relative flex flex-col gap-2 px-4 py-3 bg-gray-100 pr-8 ${!isLast ? 'border-r border-gray-200' : ''}`}
+                            className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${!isLast ? 'border-r border-gray-200' : ''}`}
                             onDragOver={(event) => handleColumnDragOver(event, column.id)}
                             onDrop={(event) => handleColumnDrop(event, column.id)}
                           >
-                            <div className="flex justify-center">
+                            <div className="flex items-center gap-3">
                               <button
                                 type="button"
-                                className={`inline-flex h-8 w-8 items-center justify-center rounded-full ${draggable ? 'cursor-grab text-gray-400 hover:text-gray-600' : 'cursor-not-allowed text-gray-300'}`}
+                                className={`inline-flex h-8 w-8 items-center justify-center rounded-md ${draggable ? 'cursor-grab text-gray-400 hover:text-gray-600' : 'cursor-not-allowed text-gray-300'}`}
                                 aria-label={`Drag ${column.label} column`}
                                 draggable={draggable}
                                 onDragStart={(event) => draggable && handleColumnDragStart(event, column.id)}
@@ -2618,8 +2614,6 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                               >
                                 <GripVertical size={14} aria-hidden="true" />
                               </button>
-                            </div>
-                            <div className="flex items-center justify-between gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleSort(column.id)}
@@ -2633,27 +2627,25 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                                   </span>
                                 )}
                               </button>
-                              {column.filterable && column.id !== 'actions' ? (
-                                <select
-                                  value={columnFilters[column.id] || ''}
-                                  onChange={(event) => handleColumnFilterChange(column.id, event.target.value)}
-                                  className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 text-gray-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                                >
-                                  <option value="">All</option>
-                                  {renderColumnFilterOptions(column.id)}
-                                </select>
-                              ) : (
-                                <span className="flex-1" />
-                              )}
                             </div>
+                            {column.filterable && column.id !== 'actions' ? (
+                              <select
+                                value={columnFilters[column.id] || ''}
+                                onChange={(event) => handleColumnFilterChange(column.id, event.target.value)}
+                                className="text-xs border border-gray-300 rounded px-2 py-1 text-gray-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                              >
+                                <option value="">All</option>
+                                {renderColumnFilterOptions(column.id)}
+                              </select>
+                            ) : (
+                              <span className="block h-1" />
+                            )}
                             <button
                               type="button"
                               onMouseDown={(event) => handleColumnResizeMouseDown(event, column.id)}
-                              className="absolute top-0 right-0 h-full w-3 flex items-center justify-center cursor-col-resize group"
+                              className="absolute top-0 right-0 h-full w-2 cursor-col-resize"
                               aria-label={`Resize ${column.label} column`}
-                            >
-                              <span className="pointer-events-none h-full w-px bg-gray-300 group-hover:bg-gray-500" />
-                            </button>
+                            />
                           </div>
                         );
                       })}

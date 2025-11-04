@@ -1607,7 +1607,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     const comment = row.comment;
     const depthLevel = row.depth || 0;
     const indentPixels = depthLevel * 20;
-    const depthTintPalette = ['bg-white', 'bg-gray-50', 'bg-gray-100', 'bg-gray-200'];
+    const depthTintPalette = ['bg-white', 'bg-rose-50', 'bg-amber-50', 'bg-emerald-50', 'bg-sky-50'];
     const depthTintClass = depthTintPalette[Math.min(depthLevel, depthTintPalette.length - 1)];
     const rowKey = isNoteRow ? `note-${note.id}` : `comment-${comment.id}`;
     const noteProjectIds = isNoteRow

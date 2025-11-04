@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square, ArrowUpDown, GripVertical } from 'lucide-react';
+import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square, ArrowUpDown, GripVertical, Search } from 'lucide-react';
 
 // Utility functions
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -151,6 +151,7 @@ export default function TaskTracker() {
   const [itemColumnWidth, setItemColumnWidth] = useState(380);
   const [selectedNoteIds, setSelectedNoteIds] = useState(() => new Set());
   const [showColumnMenu, setShowColumnMenu] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [pendingDueDate, setPendingDueDate] = useState(null);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [datePickerMonth, setDatePickerMonth] = useState(() => {
@@ -822,6 +823,169 @@ Rules:
     return tags;
   };
 
+  const searchCriteria = useMemo(() => {
+    const raw = searchQuery.trim();
+    if (!raw) return null;
+
+    const criteria = {
+      textTokens: [],
+      type: null,
+      status: null,
+      isUrgent: null,
+      projectIds: [],
+      sessionIds: [],
+      requireDue: false,
+      requireNoDue: false,
+      dueRange: null
+    };
+
+    const tagPattern = /\/([a-z])(?:\s+([^\/]+?))?(?=\s*\/|$)/gi;
+    let working = raw;
+    const matches = [...raw.matchAll(tagPattern)];
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    matches.forEach(match => {
+      const tag = match[1].toLowerCase();
+      const value = match[2]?.trim();
+      let strip = true;
+
+      switch (tag) {
+        case 'a':
+          criteria.type = 'to_do';
+          break;
+        case 'n':
+          criteria.type = 'note';
+          break;
+        case 'u':
+          criteria.isUrgent = true;
+          break;
+        case 'p': {
+          if (value) {
+            const valueLower = value.toLowerCase();
+            const matchedProjects = data.projects.filter(project =>
+              (project.name || '').toLowerCase().includes(valueLower)
+            );
+            if (matchedProjects.length > 0) {
+              matchedProjects.forEach(project => {
+                if (!criteria.projectIds.includes(project.id)) {
+                  criteria.projectIds.push(project.id);
+                }
+              });
+            } else {
+              strip = false;
+            }
+          } else {
+            strip = false;
+          }
+          break;
+        }
+        case 's': {
+          if (value) {
+            const valueLower = value.toLowerCase();
+            const matchedSessions = data.sessions.filter(session =>
+              (session.title || '').toLowerCase().includes(valueLower)
+            );
+            if (matchedSessions.length > 0) {
+              matchedSessions.forEach(session => {
+                if (!criteria.sessionIds.includes(session.id)) {
+                  criteria.sessionIds.push(session.id);
+                }
+              });
+            } else {
+              strip = false;
+            }
+          } else {
+            strip = false;
+          }
+          break;
+        }
+        case 't': {
+          if (value) {
+            const valueLower = value.toLowerCase();
+            const matchedStatus = STATUS_ORDER.find(statusId => {
+              const label = STATUS_LABELS[statusId]?.toLowerCase() ?? statusId;
+              return label.includes(valueLower);
+            });
+            if (matchedStatus) {
+              criteria.status = matchedStatus;
+            } else {
+              strip = false;
+            }
+          } else {
+            strip = false;
+          }
+          break;
+        }
+        case 'd': {
+          if (value) {
+            if (value.toLowerCase() === 'none') {
+              criteria.requireNoDue = true;
+              criteria.requireDue = false;
+            } else {
+              const daysMatch = value.match(/^(\d+)\s*(?:days?)?$/i);
+              if (daysMatch) {
+                const days = parseInt(daysMatch[1], 10);
+                if (!Number.isNaN(days)) {
+                  const base = new Date();
+                  base.setHours(0, 0, 0, 0);
+                  base.setDate(base.getDate() + days);
+                  criteria.requireDue = true;
+                  criteria.requireNoDue = false;
+                  const start = base.getTime();
+                  criteria.dueRange = { start, end: start + dayMs };
+                } else {
+                  strip = false;
+                }
+              } else {
+                const parsed = Date.parse(`${value}T00:00:00`);
+                if (!Number.isNaN(parsed)) {
+                  criteria.requireDue = true;
+                  criteria.requireNoDue = false;
+                  criteria.dueRange = { start: parsed, end: parsed + dayMs };
+                } else {
+                  strip = false;
+                }
+              }
+            }
+          } else {
+            criteria.requireDue = true;
+            criteria.requireNoDue = false;
+          }
+          break;
+        }
+        default:
+          strip = false;
+      }
+
+      if (strip) {
+        working = working.replace(match[0], ' ');
+      }
+    });
+
+    const tokens = working
+      .split(/\s+/)
+      .map(token => token.toLowerCase())
+      .filter(Boolean);
+
+    criteria.textTokens = tokens;
+
+    const hasConstraints =
+      tokens.length > 0 ||
+      criteria.type !== null ||
+      criteria.status !== null ||
+      criteria.isUrgent !== null ||
+      criteria.projectIds.length > 0 ||
+      criteria.sessionIds.length > 0 ||
+      criteria.requireDue ||
+      criteria.requireNoDue;
+
+    if (!hasConstraints) {
+      return null;
+    }
+
+    return criteria;
+  }, [searchQuery, data.projects, data.sessions, data.noteTypes]);
+
   // Handle project autocomplete
   const updateDueDatePreview = (text) => {
     const absoluteMatch = text.match(/\/d\s+(\d{4}-\d{2}-\d{2})/i);
@@ -1416,6 +1580,68 @@ Rules:
           }
         }
       }
+
+      if (searchCriteria) {
+        if (searchCriteria.type && note.type !== searchCriteria.type) {
+          return false;
+        }
+        if (searchCriteria.status && note.status !== searchCriteria.status) {
+          return false;
+        }
+        if (searchCriteria.isUrgent === true && !note.isUrgent) {
+          return false;
+        }
+        if (searchCriteria.projectIds.length > 0) {
+          const hasProjectMatch = projectIds.some(id => searchCriteria.projectIds.includes(id));
+          if (!hasProjectMatch) {
+            return false;
+          }
+        }
+        if (searchCriteria.sessionIds.length > 0) {
+          if (!note.sessionId || !searchCriteria.sessionIds.includes(note.sessionId)) {
+            return false;
+          }
+        }
+        if (searchCriteria.requireNoDue) {
+          if (note.dueDate) {
+            return false;
+          }
+        } else if (searchCriteria.requireDue) {
+          if (!note.dueDate) {
+            return false;
+          }
+          if (searchCriteria.dueRange) {
+            const { start, end } = searchCriteria.dueRange;
+            if (note.dueDate < start || note.dueDate >= end) {
+              return false;
+            }
+          }
+        }
+        if (searchCriteria.textTokens.length > 0) {
+          const projectNames = projectIds
+            .map(id => data.projects.find(p => p.id === id)?.name || '')
+            .filter(Boolean);
+          const sessionTitle = note.sessionId
+            ? data.sessions.find(s => s.id === note.sessionId)?.title || ''
+            : '';
+          const typeName = data.noteTypes.find(t => t.id === note.type)?.name || toTitleCase(note.type || '');
+          const statusLabel = STATUS_LABELS[note.status] || toTitleCase(note.status || '');
+          const haystack = [
+            note.content || '',
+            projectNames.join(' '),
+            sessionTitle,
+            typeName,
+            statusLabel
+          ]
+            .join(' ')
+            .toLowerCase();
+          const matchesTokens = searchCriteria.textTokens.every(token => haystack.includes(token));
+          if (!matchesTokens) {
+            return false;
+          }
+        }
+      }
+
       return true;
     };
 
@@ -1426,7 +1652,7 @@ Rules:
       }
     });
 
-    if (matchingNotes.size === 0 && Object.keys(columnFilters).length === 0) {
+    if (matchingNotes.size === 0 && Object.keys(columnFilters).length === 0 && !searchCriteria) {
       allNotes.forEach(note => matchingNotes.add(note.id));
     }
 
@@ -2394,34 +2620,65 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           </div>
           
           {/* Action Bar */}
-          <div className="flex flex-wrap gap-2 mt-4">
-            <button
-              onClick={() => setShowProjectModal(true)}
-              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
-            >
-              <Folder size={16} /> New Project
-            </button>
-            <button
-              onClick={() => setShowSessionModal(true)}
-              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
-            >
-              <Play size={16} /> Start Session
-            </button>
-            <button
-              onClick={() => {
-                setEditingNote(null);
-                setShowNoteModal(true);
-              }}
-              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
-            >
-              <Plus size={16} /> New Item
-            </button>
-            <button
-              onClick={() => setShowColumnMenu(true)}
-              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
-            >
-              Columns
-            </button>
+          <div className="flex flex-wrap items-center gap-2 mt-4">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setShowProjectModal(true)}
+                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
+              >
+                <Folder size={16} /> New Project
+              </button>
+              <button
+                onClick={() => setShowSessionModal(true)}
+                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
+              >
+                <Play size={16} /> Start Session
+              </button>
+              <button
+                onClick={() => {
+                  setEditingNote(null);
+                  setShowNoteModal(true);
+                }}
+                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
+              >
+                <Plus size={16} /> New Item
+              </button>
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                onClick={() => setShowColumnMenu(true)}
+                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+              >
+                Columns
+              </button>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                <input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      setSearchQuery('');
+                      event.stopPropagation();
+                    }
+                  }}
+                  placeholder="Search or use /tags"
+                  aria-label="Search items"
+                  className="pl-9 pr-8 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-56"
+                  type="text"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    aria-label="Clear search"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2 mt-3">

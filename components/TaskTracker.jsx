@@ -1227,6 +1227,20 @@ Rules:
     updateNoteType(note, nextType);
   };
 
+  const updateNoteUrgency = (note, isUrgent) => {
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(n => {
+        if (n.id !== note.id) return n;
+        return {
+          ...n,
+          isUrgent,
+          updatedAt: Date.now()
+        };
+      })
+    }));
+  };
+
   const addProjectToNote = (noteId, projectId) => {
     if (!projectId) return;
     setData(prev => ({
@@ -1698,9 +1712,9 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     const dueDateValue = isNoteRow && note.dueDate
       ? formatDateShort(note.dueDate)
       : '—';
-    const urgentValue = isNoteRow && note.isUrgent
-      ? <span className="inline-flex items-center gap-1 text-xs text-red-600"><AlertCircle size={12} /> Urgent</span>
-      : '—';
+    const urgentClasses = note.isUrgent
+      ? 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'
+      : 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500';
     
     return (
       <div
@@ -1800,7 +1814,17 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           if (column.id === 'urgent') {
             return (
               <div key={`${rowKey}-urgent`} className="text-sm text-gray-600">
-                {urgentValue}
+                {isNoteRow ? (
+                  <button
+                    type="button"
+                    onClick={() => updateNoteUrgency(note, !note.isUrgent)}
+                    className={urgentClasses}
+                  >
+                    {note.isUrgent ? (<><AlertCircle size={12} /> Urgent</>) : 'Not Urgent'}
+                  </button>
+                ) : (
+                  <span className="text-gray-300 text-sm">—</span>
+                )}
               </div>
             );
           }

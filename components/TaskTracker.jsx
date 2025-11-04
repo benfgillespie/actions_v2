@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square, ArrowUpDown } from 'lucide-react';
+import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square, ArrowUpDown, GripVertical } from 'lucide-react';
 
 // Utility functions
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -1575,22 +1575,22 @@ Rules:
   
 const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     if (row.kind === 'comment-input') {
-      const totalColumns = visibleColumnsList.length + 1;
+      const totalColumns = visibleColumnsList.length + 2;
       return (
         <div
           key={`comment-input-${row.noteId}`}
-          className="grid items-start gap-3 px-3 py-2 border-b border-gray-100 bg-gray-50"
+          className="grid items-stretch gap-0 border-b border-gray-200 bg-gray-50"
           style={{ gridTemplateColumns }}
         >
           <div
-            className="flex items-center gap-2"
+            className="relative flex items-start gap-2 px-4 py-3"
             style={{
-              paddingLeft: `${row.depth * 20 + 24}px`,
-              gridColumn: `1 / span ${totalColumns}`
+              gridColumn: `1 / span ${totalColumns}`,
+              paddingLeft: `${row.depth * 20 + 24}px`
             }}
           >
             <MessageSquare size={14} className="text-gray-400 flex-shrink-0" />
-            <div className="flex items-center gap-2 flex-1">
+            <div className="flex-1">
               <ThreadInput
                 noteId={row.noteId}
                 onAdd={addThreadItem}
@@ -1648,72 +1648,83 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       <span className="w-4 h-4" />
     );
     
-    const contentCell = isNoteRow ? (
-      <div className="flex items-center gap-3" style={{ paddingLeft: indent }}>
-        {collapseButton}
-        <div className="flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <span className="text-sm font-medium text-gray-900">{note.content}</span>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-gray-400">{formatDateShort(note.createdAt)}</span>
-              {isNoteRow && (
-                <button
-                  onClick={() => {
-                    if (row.isCollapsed) {
-                      expandNote(note.id);
-                    }
-                    toggleComments(note.id);
-                  }}
-                  className={`text-xs font-medium flex items-center gap-1 transition ${
-                    row.commentsExpanded ? 'text-blue-600' : 'text-gray-400 hover:text-blue-600'
-                  }`}
-                >
-                  <MessageSquare size={14} />
-                  {row.commentCount > 0 ? row.commentCount : '+'}
-                </button>
-              )}
+    const contentCell = (
+      <div className={`relative px-4 py-3 ${visibleColumnsList.length > 0 ? 'border-r border-gray-200' : ''}`}>
+        {isNoteRow ? (
+          <div className="flex items-start gap-3" style={{ paddingLeft: indent }}>
+            {collapseButton}
+            <div className="flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-sm font-medium text-gray-900">{note.content}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-400">{formatDateShort(note.createdAt)}</span>
+                  <button
+                    onClick={() => {
+                      if (row.isCollapsed) {
+                        expandNote(note.id);
+                      }
+                      toggleComments(note.id);
+                    }}
+                    className={`text-xs font-medium flex items-center gap-1 transition ${
+                      row.commentsExpanded ? 'text-blue-600' : 'text-gray-400 hover:text-blue-600'
+                    }`}
+                  >
+                    <MessageSquare size={14} />
+                    {row.commentCount > 0 ? row.commentCount : '+'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-    ) : (
-      <div className="flex items-start gap-3 text-sm text-gray-700" style={{ paddingLeft: indent }}>
-        <span className="w-4 h-4 text-gray-400 flex items-center justify-center">
-          <MessageSquare size={14} />
-        </span>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
-              {typeLabel}
+        ) : (
+          <div className="flex items-start gap-3 text-sm text-gray-700" style={{ paddingLeft: indent }}>
+            <span className="w-4 h-4 text-gray-400 flex items-center justify-center">
+              <MessageSquare size={14} />
             </span>
-            {commentSession && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-50 text-orange-700">
-                <Clock size={12} /> {commentSession.title}
-              </span>
-            )}
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                  {typeLabel}
+                </span>
+                {commentSession && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-50 text-orange-700">
+                    <Clock size={12} /> {commentSession.title}
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 leading-relaxed text-sm text-gray-700">{comment.content}</p>
+              <div className="mt-1 text-xs text-gray-400">{formatDate(comment.createdAt)}</div>
+            </div>
           </div>
-          <p className="mt-1 leading-relaxed text-sm text-gray-700">{comment.content}</p>
-          <div className="mt-1 text-xs text-gray-400">{formatDate(comment.createdAt)}</div>
-        </div>
+        )}
       </div>
     );
-    
-    const rowClassName = isNoteRow
-      ? 'grid items-center gap-3 px-3 py-2 border-b border-gray-100 bg-white hover:bg-gray-50 transition'
-      : 'grid items-center gap-3 px-3 py-2 border-b border-gray-100 bg-gray-50';
-    
+
     const isSelected = isNoteRow ? selectedNoteIds.has(note.id) : false;
-    const selectionCell = isNoteRow ? (
-      <div className="flex items-center justify-center">
-        <input
-          type="checkbox"
-          className="h-4 w-4"
-          checked={isSelected}
-          onChange={() => toggleNoteSelection(note.id)}
-        />
+    let rowBackgroundClass = 'bg-gray-50';
+    if (isNoteRow) {
+      if (isSelected) {
+        rowBackgroundClass = 'bg-blue-50';
+      } else if (note.isUrgent) {
+        rowBackgroundClass = 'bg-red-50';
+      } else {
+        rowBackgroundClass = 'bg-white';
+      }
+    }
+    const hoverClass = isNoteRow && !isSelected && !note.isUrgent ? 'hover:bg-gray-50' : '';
+    const rowClassName = `grid items-stretch gap-0 border-b border-gray-200 transition-colors ${rowBackgroundClass} ${hoverClass}`;
+
+    const selectionCell = (
+      <div className="relative flex items-center justify-center px-4 py-3 border-r border-gray-200">
+        {isNoteRow ? (
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={isSelected}
+            onChange={() => toggleNoteSelection(note.id)}
+          />
+        ) : null}
       </div>
-    ) : (
-      <div className="flex items-center justify-center" />
     );
 
     const sessionLabel = isNoteRow
@@ -1734,10 +1745,14 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       >
         {selectionCell}
         {contentCell}
-        {visibleColumnsList.map(column => {
+        {visibleColumnsList.map((column, columnIndex) => {
+          const isLastVisibleColumn = columnIndex === visibleColumnsList.length - 1;
           if (column.id === 'type') {
             return (
-              <div key={`${rowKey}-type`} className="text-sm text-gray-700">
+              <div
+                key={`${rowKey}-type`}
+                className={`relative px-4 py-3 text-sm text-gray-700 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+              >
                 {isNoteRow ? (
                   <button
                     type="button"
@@ -1758,12 +1773,20 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           if (column.id === 'project') {
             if (!isNoteRow) {
               return (
-                <div key={`${rowKey}-project`} className="text-sm text-gray-600">—</div>
+                <div
+                  key={`${rowKey}-project`}
+                  className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+                >
+                  —
+                </div>
               );
             }
             const availableProjects = data.projects.filter(p => !noteProjectIds.includes(p.id));
             return (
-              <div key={`${rowKey}-project`} className="text-sm text-gray-600">
+              <div
+                key={`${rowKey}-project`}
+                className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+              >
                 <div className="flex flex-wrap items-center gap-1">
                   {projectEntities.length === 0 && (
                     <span className="text-gray-400">—</span>
@@ -1807,7 +1830,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           
           if (column.id === 'session') {
             return (
-              <div key={`${rowKey}-session`} className="text-sm text-gray-600 truncate">
+              <div
+                key={`${rowKey}-session`}
+                className={`relative px-4 py-3 text-sm text-gray-600 truncate ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+              >
                 {sessionLabel}
               </div>
             );
@@ -1815,7 +1841,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           
           if (column.id === 'dueDate') {
             return (
-              <div key={`${rowKey}-due`} className="text-sm text-gray-600">
+              <div
+                key={`${rowKey}-due`}
+                className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+              >
                 {dueDateValue}
               </div>
             );
@@ -1823,7 +1852,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           
           if (column.id === 'urgent') {
             return (
-              <div key={`${rowKey}-urgent`} className="text-sm text-gray-600">
+              <div
+                key={`${rowKey}-urgent`}
+                className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+              >
                 {isNoteRow ? (
                   <button
                     type="button"
@@ -1841,7 +1873,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           
           if (column.id === 'status') {
             return (
-              <div key={`${rowKey}-status`} className="flex items-center">
+              <div
+                key={`${rowKey}-status`}
+                className={`relative px-4 py-3 flex items-center ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+              >
                 {isNoteRow ? (
                   <button
                     type="button"
@@ -1859,7 +1894,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
 
           if (column.id === 'createdAt') {
             return (
-              <div key={`${rowKey}-created`} className="text-sm text-gray-600">
+              <div
+                key={`${rowKey}-created`}
+                className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+              >
                 {isNoteRow && note.createdAt ? formatDateShort(note.createdAt) : '—'}
               </div>
             );
@@ -1869,7 +1907,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             return (
               <div
                 key={`${rowKey}-actions`}
-                className="flex items-center gap-2 justify-end bg-gray-100 rounded-md px-3 py-1 h-full w-full border border-gray-200"
+                className={`relative px-4 py-3 flex items-center justify-end gap-2 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
               >
                 {isNoteRow ? (
                   <>
@@ -1878,14 +1916,14 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                         setEditingNote(note);
                         setShowNoteModal(true);
                       }}
-                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
                       aria-label="Edit"
                     >
                       <Edit2 size={16} />
                     </button>
                     <button
                       onClick={() => deleteNote(note.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200"
                       aria-label="Delete"
                     >
                       <Trash2 size={16} />
@@ -2519,10 +2557,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                 <div className="overflow-x-auto">
                   <div style={{ minWidth: `${gridMinWidth}px` }}>
                     <div
-                      className="grid items-center gap-3 px-3 py-2 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-600 select-none rounded-t-lg"
+                      className="grid items-stretch gap-0 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-700 select-none rounded-t-lg"
                       style={{ gridTemplateColumns }}
                     >
-                      <div className="flex items-center justify-center bg-gray-100 rounded-md h-full w-full">
+                      <div className="relative flex items-center justify-center px-4 py-3 border-r border-gray-200 bg-gray-100">
                         <input
                           ref={selectAllRef}
                           type="checkbox"
@@ -2530,35 +2568,62 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                           checked={allVisibleSelected && visibleNoteIds.length > 0}
                           disabled={visibleNoteIds.length === 0}
                           onChange={toggleSelectAllVisible}
+                          aria-label="Select all visible items"
                         />
                       </div>
-                      <div className="flex items-center gap-2 bg-gray-100 px-2 py-1 rounded-md">
-                        <span>Item</span>
-                        <span
-                          className="ml-auto h-4 w-2 cursor-col-resize rounded-full bg-gray-300 hover:bg-gray-500"
-                          onMouseDown={(event) => handleColumnResizeMouseDown(event, '__item__')}
-                          role="separator"
-                        />
+                      <div className={`relative flex flex-col gap-2 px-4 py-3 bg-gray-100 pr-8 ${visibleColumns.length > 0 ? 'border-r border-gray-200' : ''}`}>
+                        <div className="flex justify-center">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 cursor-default"
+                            aria-label="Item column"
+                            disabled
+                          >
+                            <GripVertical size={14} aria-hidden="true" />
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-gray-700">Item</span>
+                        </div>
+                        {visibleColumns.length > 0 && (
+                          <button
+                            type="button"
+                            onMouseDown={(event) => handleColumnResizeMouseDown(event, '__item__')}
+                            className="absolute top-0 right-0 h-full w-3 flex items-center justify-center cursor-col-resize group"
+                            aria-label="Resize Item column"
+                          >
+                            <span className="pointer-events-none h-full w-px bg-gray-300 group-hover:bg-gray-500" />
+                          </button>
+                        )}
                       </div>
-                      {visibleColumns.map(column => {
+                      {visibleColumns.map((column, index) => {
                         const draggable = !column.alwaysVisible || column.id !== 'actions';
                         const isSorted = sortConfig.columnId === column.id;
+                        const isLast = index === visibleColumns.length - 1;
                         return (
                           <div
                             key={`header-${column.id}`}
-                            className={`flex items-stretch gap-2 bg-gray-100 px-2 py-1 rounded-md ${draggable ? 'cursor-move' : ''}`}
-                            draggable={draggable}
-                            onDragStart={(event) => draggable && handleColumnDragStart(event, column.id)}
+                            className={`relative flex flex-col gap-2 px-4 py-3 bg-gray-100 pr-8 ${!isLast ? 'border-r border-gray-200' : ''}`}
                             onDragOver={(event) => handleColumnDragOver(event, column.id)}
                             onDrop={(event) => handleColumnDrop(event, column.id)}
-                            onDragEnd={handleColumnDragEnd}
-                            style={{ width: '100%', height: '100%' }}
                           >
-                            <div className="flex flex-col gap-1 w-full">
+                            <div className="flex justify-center">
+                              <button
+                                type="button"
+                                className={`inline-flex h-8 w-8 items-center justify-center rounded-full ${draggable ? 'cursor-grab text-gray-400 hover:text-gray-600' : 'cursor-not-allowed text-gray-300'}`}
+                                aria-label={`Drag ${column.label} column`}
+                                draggable={draggable}
+                                onDragStart={(event) => draggable && handleColumnDragStart(event, column.id)}
+                                onDragEnd={handleColumnDragEnd}
+                              >
+                                <GripVertical size={14} aria-hidden="true" />
+                              </button>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleSort(column.id)}
-                                className={`flex items-center gap-1 text-left text-gray-700 bg-transparent ${column.id === 'actions' ? 'cursor-default' : ''}`}
+                                className={`flex items-center gap-1 text-left text-gray-700 bg-transparent ${column.id === 'actions' ? 'cursor-default' : 'cursor-pointer'}`}
                                 disabled={column.id === 'actions'}
                               >
                                 <span>{column.label}</span>
@@ -2568,22 +2633,27 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                                   </span>
                                 )}
                               </button>
-                              {column.filterable && column.id !== 'actions' && (
+                              {column.filterable && column.id !== 'actions' ? (
                                 <select
                                   value={columnFilters[column.id] || ''}
                                   onChange={(event) => handleColumnFilterChange(column.id, event.target.value)}
-                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 text-gray-600 focus:outline-none"
+                                  className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 text-gray-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
                                 >
                                   <option value="">All</option>
                                   {renderColumnFilterOptions(column.id)}
                                 </select>
+                              ) : (
+                                <span className="flex-1" />
                               )}
                             </div>
-                            <span
-                              className="ml-auto h-4 w-2 cursor-col-resize rounded-full bg-gray-300 hover:bg-gray-500"
+                            <button
+                              type="button"
                               onMouseDown={(event) => handleColumnResizeMouseDown(event, column.id)}
-                              role="separator"
-                            />
+                              className="absolute top-0 right-0 h-full w-3 flex items-center justify-center cursor-col-resize group"
+                              aria-label={`Resize ${column.label} column`}
+                            >
+                              <span className="pointer-events-none h-full w-px bg-gray-300 group-hover:bg-gray-500" />
+                            </button>
                           </div>
                         );
                       })}

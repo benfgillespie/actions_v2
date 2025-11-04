@@ -100,6 +100,8 @@ const COLUMN_DEFAULT_WIDTHS = {
   actions: 90
 };
 
+const SELECTION_COLUMN_WIDTH = 40;
+
 const INITIAL_COLUMN_VISIBILITY = COLUMN_DEFS.reduce((acc, column) => {
   acc[column.id] = true;
   return acc;
@@ -138,7 +140,7 @@ export default function TaskTracker() {
   // const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showProjectAutocomplete, setShowProjectAutocomplete] = useState(false);
   const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = useState(0);
-  const [appliedTags, setAppliedTags] = useState({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
+  const [appliedTags, setAppliedTags] = useState({ type: 'note', isUrgent: false, dueDate: null, projectIds: [] });
   const [sortConfig, setSortConfig] = useState({ columnId: null, direction: 'asc' });
   const [columnVisibility, setColumnVisibility] = useState(() => ({ ...INITIAL_COLUMN_VISIBILITY }));
   const [columnOrder, setColumnOrder] = useState(() => COLUMN_DEFS.map(col => col.id));
@@ -147,6 +149,7 @@ export default function TaskTracker() {
     return acc;
   }, {}));
   const [itemColumnWidth, setItemColumnWidth] = useState(380);
+  const [selectedNoteIds, setSelectedNoteIds] = useState(() => new Set());
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [pendingDueDate, setPendingDueDate] = useState(null);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
@@ -157,6 +160,7 @@ export default function TaskTracker() {
   });
   const quickEntryRef = useRef(null);
   const datePickerRef = useRef(null);
+  const selectAllRef = useRef(null);
   const hasInitializedRef = useRef(false);
   const lastSavedSnapshotRef = useRef(null);
   const saveTimeoutRef = useRef(null);
@@ -188,6 +192,14 @@ export default function TaskTracker() {
               transformed.type = 'note';
             }
             transformed.status = normalizeStatus(transformed.status);
+            const projectIds = Array.isArray(transformed.projectIds)
+              ? transformed.projectIds.filter(Boolean)
+              : [];
+            if (transformed.projectId) {
+              projectIds.push(transformed.projectId);
+            }
+            transformed.projectIds = Array.from(new Set(projectIds));
+            delete transformed.projectId;
             return transformed;
           })
       : [];
@@ -549,7 +561,7 @@ Rules:
       const storedWidth = columnWidths[column.id] ?? COLUMN_DEFAULT_WIDTHS[column.id] ?? 150;
       return `${Math.max(minWidth, storedWidth)}px`;
     });
-    return [primaryWidth ? `${primaryWidth}px` : 'minmax(320px, 2fr)', ...otherTemplates].join(' ');
+    return [`${SELECTION_COLUMN_WIDTH}px`, `${primaryWidth}px`, ...otherTemplates].join(' ');
   }, [visibleColumns, columnWidths, itemColumnWidth]);
 
   const gridMinWidth = useMemo(() => {
@@ -559,7 +571,7 @@ Rules:
       const storedWidth = columnWidths[column.id] ?? COLUMN_DEFAULT_WIDTHS[column.id] ?? 150;
       return sum + Math.max(minWidth, storedWidth);
     }, 0);
-    return Math.max(640, primaryWidth + otherWidth);
+    return Math.max(640, SELECTION_COLUMN_WIDTH + primaryWidth + otherWidth);
   }, [visibleColumns, columnWidths, itemColumnWidth]);
 
   const handleColumnDragStart = (event, columnId) => {
@@ -639,6 +651,7 @@ Rules:
     document.addEventListener('mouseup', handleColumnResizeMouseUp);
   }, [columnWidths, itemColumnWidth, handleColumnResizeMouseMove, handleColumnResizeMouseUp]);
 
+
   const renderColumnFilterOptions = (columnId) => {
     switch (columnId) {
       case 'type':
@@ -689,8 +702,16 @@ Rules:
       case 'type':
         return note.type || '';
       case 'project': {
-        const project = data.projects.find(p => p.id === note.projectId);
-        return project ? project.name : '';
+        const projectIds = Array.isArray(note.projectIds)
+          ? note.projectIds
+          : note.projectId
+            ? [note.projectId]
+            : [];
+        const projectNames = projectIds
+          .map(id => data.projects.find(p => p.id === id)?.name || '')
+          .filter(Boolean)
+          .sort();
+        return projectNames[0] || '';
       }
       case 'session': {
         const session = data.sessions.find(s => s.id === note.sessionId);
@@ -722,7 +743,7 @@ Rules:
       type: 'note',
       isUrgent: false,
       dueDate: null,
-      projectId: null,
+      projectIds: [],
       isComment: false,
       content: text
     };
@@ -787,7 +808,9 @@ Rules:
               p.name.toLowerCase() === value.toLowerCase()
             );
             if (project) {
-              tags.projectId = project.id;
+              if (!tags.projectIds.includes(project.id)) {
+                tags.projectIds.push(project.id);
+              }
             }
             cleanContent = cleanContent.replace(match[0], '').trim();
           }
@@ -901,9 +924,10 @@ Rules:
   const getFilteredProjects = () => {
     const pMatch = quickEntry.match(/\/p\s+(.+?)$/i);
     const searchTerm = pMatch ? pMatch[1] : '';
-    return data.projects.filter(p => 
-      p.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const existingIds = new Set(appliedTags.projectIds || []);
+    return data.projects
+      .filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()))
+      .filter(p => !existingIds.has(p.id));
   };
 
   // Handle keydown in quick entry
@@ -950,7 +974,13 @@ Rules:
     // Remove /p and everything after it (handle with or without space/text after)
     const newText = quickEntry.replace(/\/p(?:\s+.*)?$/i, '').trim();
     setQuickEntry(newText);
-    setAppliedTags(prev => ({ ...prev, projectId: project.id }));
+    setAppliedTags(prev => {
+      const nextIds = prev.projectIds ? [...prev.projectIds] : [];
+      if (!nextIds.includes(project.id)) {
+        nextIds.push(project.id);
+      }
+      return { ...prev, projectIds: nextIds };
+    });
     setShowProjectAutocomplete(false);
     updateDueDatePreview(newText);
   };
@@ -973,7 +1003,7 @@ Rules:
   };
 
   // Remove a tag from applied tags
-  const removeTag = (tagType) => {
+  const removeTag = (tagType, value) => {
     const newTags = { ...appliedTags };
     
     switch(tagType) {
@@ -989,7 +1019,11 @@ Rules:
         setDatePickerVisible(false);
         break;
       case 'project':
-        newTags.projectId = null;
+        if (value) {
+          newTags.projectIds = (newTags.projectIds || []).filter(id => id !== value);
+        } else {
+          newTags.projectIds = [];
+        }
         break;
     }
     
@@ -1006,11 +1040,15 @@ Rules:
     const finalType = appliedTags.type !== 'note' ? appliedTags.type : parsed.type || 'note';
     const finalDueDate = parsed.dueDate ?? appliedTags.dueDate ?? null;
     const finalUrgent = appliedTags.isUrgent || parsed.isUrgent;
-    const finalProjectId = appliedTags.projectId || selectedProject;
+    const finalProjectIds = Array.from(new Set([
+      ...(parsed.projectIds || []),
+      ...(appliedTags.projectIds || []),
+      ...(selectedProject ? [selectedProject] : [])
+    ].filter(Boolean)));
 
     const newNote = {
       id: generateId(),
-      projectId: finalProjectId,
+      projectIds: finalProjectIds,
       sessionId: activeSession?.id || null,
       parentId: null,
       type: finalType,
@@ -1028,7 +1066,7 @@ Rules:
     }));
     setQuickEntry('');
     setShowProjectAutocomplete(false);
-    setAppliedTags({ type: 'note', isUrgent: false, dueDate: null, projectId: null });
+    setAppliedTags({ type: 'note', isUrgent: false, dueDate: null, projectIds: [] });
     setPendingDueDate(null);
     setDatePickerVisible(false);
   };
@@ -1100,6 +1138,11 @@ Rules:
   // Add/update note
   const saveNote = (noteData) => {
     const baseStatus = normalizeStatus(noteData.status);
+    const sanitizedProjectIds = Array.isArray(noteData.projectIds)
+      ? Array.from(new Set(noteData.projectIds.filter(Boolean)))
+      : noteData.projectId
+        ? [noteData.projectId]
+        : [];
     if (editingNote?.id) {
       setData(prev => ({
         ...prev,
@@ -1108,6 +1151,7 @@ Rules:
           return {
             ...n,
             ...noteData,
+            projectIds: sanitizedProjectIds,
             status: baseStatus,
             sessionId: activeSession?.id || n.sessionId || null,
             updatedAt: Date.now()
@@ -1119,7 +1163,13 @@ Rules:
         ...noteData,
         id: generateId(),
         parentId: editingNote?.parentId ?? noteData.parentId ?? null,
-        projectId: noteData.projectId || editingNote?.projectId || selectedProject || null,
+        projectIds: sanitizedProjectIds.length > 0
+          ? sanitizedProjectIds
+          : editingNote?.projectIds
+            ? editingNote.projectIds
+            : selectedProject
+              ? [selectedProject]
+              : [],
         sessionId: activeSession?.id || null,
         status: baseStatus,
         createdAt: Date.now(),
@@ -1177,6 +1227,41 @@ Rules:
     updateNoteType(note, nextType);
   };
 
+  const addProjectToNote = (noteId, projectId) => {
+    if (!projectId) return;
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(note => {
+        if (note.id !== noteId) return note;
+        const currentIds = Array.isArray(note.projectIds) ? [...note.projectIds] : note.projectId ? [note.projectId] : [];
+        if (!currentIds.includes(projectId)) {
+          currentIds.push(projectId);
+        }
+        return {
+          ...note,
+          projectIds: currentIds,
+          updatedAt: Date.now()
+        };
+      })
+    }));
+  };
+
+  const removeProjectFromNote = (noteId, projectId) => {
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(note => {
+        if (note.id !== noteId) return note;
+        const currentIds = Array.isArray(note.projectIds) ? note.projectIds : note.projectId ? [note.projectId] : [];
+        const nextIds = currentIds.filter(id => id !== projectId);
+        return {
+          ...note,
+          projectIds: nextIds,
+          updatedAt: Date.now()
+        };
+      })
+    }));
+  };
+
   // Delete note
   const deleteNote = (noteId) => {
     const deleteRecursive = (id) => {
@@ -1188,6 +1273,12 @@ Rules:
         notes: prev.notes.filter(n => n.id !== id),
         comments: prev.comments.filter(c => c.noteId !== id)
       }));
+      setSelectedNoteIds(prev => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     };
     deleteRecursive(noteId);
   };
@@ -1229,7 +1320,11 @@ Rules:
       const newNote = {
         id: generateId(),
         parentId: noteId,
-        projectId: parent.projectId,
+        projectIds: Array.isArray(parent.projectIds)
+          ? [...parent.projectIds]
+          : parent.projectId
+            ? [parent.projectId]
+            : [],
         sessionId: activeSession?.id || parent.sessionId || null,
         type: type || 'note',
         content,
@@ -1252,10 +1347,18 @@ Rules:
     const noteById = new Map(allNotes.map(n => [n.id, n]));
 
     const matchesFilter = (note) => {
+      const projectIds = Array.isArray(note.projectIds)
+        ? note.projectIds
+        : note.projectId
+          ? [note.projectId]
+          : [];
+      if (selectedProject && !projectIds.includes(selectedProject)) {
+        return false;
+      }
       if (columnFilters.project) {
         if (columnFilters.project === '__NONE__') {
-          if (note.projectId) return false;
-        } else if (note.projectId !== columnFilters.project) {
+          if (projectIds.length > 0) return false;
+        } else if (!projectIds.includes(columnFilters.project)) {
           return false;
         }
       }
@@ -1348,10 +1451,22 @@ Rules:
     } else if (groupBy === 'project') {
       const grouped = {};
       topLevelNotes.forEach(note => {
-        const project = data.projects.find(p => p.id === note.projectId);
-        const key = project ? project.name : 'No Project';
-        if (!grouped[key]) grouped[key] = [];
-        grouped[key].push(note);
+        const projectIds = Array.isArray(note.projectIds)
+          ? note.projectIds
+          : note.projectId
+            ? [note.projectId]
+            : [];
+        if (projectIds.length === 0) {
+          if (!grouped['No Project']) grouped['No Project'] = [];
+          grouped['No Project'].push(note);
+        } else {
+          projectIds.forEach(id => {
+            const project = data.projects.find(p => p.id === id);
+            const key = project ? project.name : 'Unknown Project';
+            if (!grouped[key]) grouped[key] = [];
+            grouped[key].push(note);
+          });
+        }
       });
       return grouped;
     } else if (groupBy === 'type') {
@@ -1468,9 +1583,16 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     const comment = row.comment;
     const indent = `${row.depth * 20}px`;
     const rowKey = isNoteRow ? `note-${note.id}` : `comment-${comment.id}`;
-    const project = isNoteRow
-      ? data.projects.find(p => p.id === note.projectId)
-      : null;
+    const noteProjectIds = isNoteRow
+      ? (Array.isArray(note.projectIds)
+          ? note.projectIds
+          : note.projectId
+            ? [note.projectId]
+            : [])
+      : [];
+    const projectEntities = noteProjectIds
+      .map(id => data.projects.find(p => p.id === id))
+      .filter(Boolean);
     const noteSession = isNoteRow
       ? data.sessions.find(s => s.id === note.sessionId)
       : null;
@@ -1489,9 +1611,6 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       : isNoteRow && note.status === 'in_progress'
         ? 'bg-yellow-100 text-yellow-700'
         : 'bg-gray-100 text-gray-600';
-  const sessionTarget = columnFilters.session || null;
-  const sessionActive = !!sessionTarget && noteSession && (sessionTarget === SESSION_FILTER_ALL ? !!note.sessionId : noteSession.id === sessionTarget);
-    const commentTypeActive = !isNoteRow && comment ? isTagActive('type', comment.type) : false;
     const canCollapse = isNoteRow && (row.childCount > 0 || row.commentCount > 0);
     const collapseButton = canCollapse ? (
       <button
@@ -1540,13 +1659,9 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
         </span>
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleTagFilter('type', comment.type, typeLabel)}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 ${commentTypeActive ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50' : ''}`}
-            >
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
               {typeLabel}
-            </button>
+            </span>
             {commentSession && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-50 text-orange-700">
                 <Clock size={12} /> {commentSession.title}
@@ -1563,7 +1678,20 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       ? 'grid items-center gap-3 px-3 py-2 border-b border-gray-100 bg-white hover:bg-gray-50 transition'
       : 'grid items-center gap-3 px-3 py-2 border-b border-gray-100 bg-gray-50';
     
-    const projectName = project ? project.name : '—';
+    const isSelected = isNoteRow ? selectedNoteIds.has(note.id) : false;
+    const selectionCell = isNoteRow ? (
+      <div className="flex items-center justify-center">
+        <input
+          type="checkbox"
+          className="h-4 w-4"
+          checked={isSelected}
+          onChange={() => toggleNoteSelection(note.id)}
+        />
+      </div>
+    ) : (
+      <div className="flex items-center justify-center" />
+    );
+
     const sessionLabel = isNoteRow
       ? noteSession?.title || '—'
       : commentSession?.title || '—';
@@ -1580,6 +1708,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
         className={rowClassName}
         style={{ gridTemplateColumns: gridTemplateColumns }}
       >
+        {selectionCell}
         {contentCell}
         {visibleColumnsList.map(column => {
           if (column.id === 'type') {
@@ -1603,9 +1732,51 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           }
           
           if (column.id === 'project') {
+            if (!isNoteRow) {
+              return (
+                <div key={`${rowKey}-project`} className="text-sm text-gray-600">—</div>
+              );
+            }
+            const availableProjects = data.projects.filter(p => !noteProjectIds.includes(p.id));
             return (
-              <div key={`${rowKey}-project`} className="text-sm text-gray-600 truncate">
-                {isNoteRow ? projectName : '—'}
+              <div key={`${rowKey}-project`} className="text-sm text-gray-600">
+                <div className="flex flex-wrap items-center gap-1">
+                  {projectEntities.length === 0 && (
+                    <span className="text-gray-400">—</span>
+                  )}
+                  {projectEntities.map(project => (
+                    <span
+                      key={project.id}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700"
+                    >
+                      <Folder size={12} /> {project.name}
+                      <button
+                        type="button"
+                        onClick={() => removeProjectFromNote(note.id, project.id)}
+                        className="hover:bg-green-200 rounded-full p-0.5"
+                        aria-label={`Remove ${project.name}`}
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                  {availableProjects.length > 0 && (
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (!value) return;
+                        addProjectToNote(note.id, value);
+                      }}
+                      className="text-xs border border-green-200 rounded px-1 py-0.5 text-green-700 bg-green-50 focus:outline-none"
+                    >
+                      <option value="">+ Add Project</option>
+                      {availableProjects.map(project => (
+                        <option key={project.id} value={project.id}>{project.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               </div>
             );
           }
@@ -1662,7 +1833,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           
           if (column.id === 'actions') {
             return (
-              <div key={`${rowKey}-actions`} className="flex items-center gap-1 justify-end bg-gray-50 rounded-md px-2 py-1 h-full border border-gray-100">
+              <div key={`${rowKey}-actions`} className="flex items-center gap-1 justify-end bg-gray-100 rounded-md px-2 py-1 h-full border border-gray-200">
                 {isNoteRow ? (
                   <>
                     <button
@@ -1700,6 +1871,166 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
 
   const filteredResult = getFilteredNotes();
   const { topLevelNotes, visibleNotes, matchingNotes } = filteredResult;
+
+  const visibleNoteIds = useMemo(() => Array.from(visibleNotes), [visibleNotes]);
+  const selectedVisibleCount = useMemo(() => visibleNoteIds.filter(id => selectedNoteIds.has(id)).length, [visibleNoteIds, selectedNoteIds]);
+  const selectedCount = selectedNoteIds.size;
+  const allVisibleSelected = visibleNoteIds.length > 0 && selectedVisibleCount === visibleNoteIds.length;
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someVisibleSelected;
+    }
+  }, [someVisibleSelected]);
+
+  const toggleNoteSelection = (noteId) => {
+    setSelectedNoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(noteId)) {
+        next.delete(noteId);
+      } else {
+        next.add(noteId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    setSelectedNoteIds(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleNoteIds.forEach(id => next.delete(id));
+      } else {
+        visibleNoteIds.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedNoteIds(new Set());
+  };
+
+  const confirmBulkAction = (message) => {
+    if (typeof window === 'undefined') return true;
+    return window.confirm(message);
+  };
+
+  const applyBulkUpdate = (description, updater) => {
+    if (selectedNoteIds.size === 0) return;
+    if (!confirmBulkAction(`${description}? (${selectedNoteIds.size} item${selectedNoteIds.size === 1 ? '' : 's'})`)) {
+      return;
+    }
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(note => {
+        if (!selectedNoteIds.has(note.id)) return note;
+        return updater(note);
+      })
+    }));
+    clearSelection();
+  };
+
+  const handleBulkStatusChange = (value) => {
+    if (!value) return;
+    const label = STATUS_LABELS[value] || value;
+    applyBulkUpdate(`Set status to ${label}`, (note) => ({
+      ...note,
+      status: normalizeStatus(value),
+      updatedAt: Date.now()
+    }));
+  };
+
+  const handleBulkTypeChange = (value) => {
+    if (!value) return;
+    const typeName = data.noteTypes.find(t => t.id === value)?.name || value;
+    applyBulkUpdate(`Set type to ${typeName}`, (note) => ({
+      ...note,
+      type: value,
+      updatedAt: Date.now()
+    }));
+  };
+
+  const handleBulkProjectAdd = (value) => {
+    if (!value) return;
+    const project = data.projects.find(p => p.id === value);
+    const projectName = project ? project.name : 'selected project';
+    applyBulkUpdate(`Add project ${projectName}`, (note) => {
+      const ids = Array.isArray(note.projectIds)
+        ? [...note.projectIds]
+        : note.projectId
+          ? [note.projectId]
+          : [];
+      if (!ids.includes(value)) {
+        ids.push(value);
+      }
+      return {
+        ...note,
+        projectIds: ids,
+        updatedAt: Date.now()
+      };
+    });
+  };
+
+  const handleBulkProjectRemove = (value) => {
+    if (!value) return;
+    if (value === '__ALL__') {
+      applyBulkUpdate('Remove all projects', (note) => ({
+        ...note,
+        projectIds: [],
+        updatedAt: Date.now()
+      }));
+      return;
+    }
+    const project = data.projects.find(p => p.id === value);
+    const projectName = project ? project.name : 'selected project';
+    applyBulkUpdate(`Remove project ${projectName}`, (note) => {
+      const ids = Array.isArray(note.projectIds)
+        ? note.projectIds
+        : note.projectId
+          ? [note.projectId]
+          : [];
+      return {
+        ...note,
+        projectIds: ids.filter(id => id !== value),
+        updatedAt: Date.now()
+      };
+    });
+  };
+
+  const handleBulkSessionChange = (value) => {
+    if (value === undefined || value === '') return;
+    const sessionId = value === '__NONE__' ? null : value;
+    const sessionLabel = value === '__NONE__'
+      ? 'no session'
+      : data.sessions.find(s => s.id === value)?.title || 'selected session';
+    applyBulkUpdate(`Set session to ${sessionLabel}`, (note) => ({
+      ...note,
+      sessionId,
+      updatedAt: Date.now()
+    }));
+  };
+
+  const handleBulkUrgentChange = (value) => {
+    if (!value) return;
+    const isUrgent = value === 'yes';
+    applyBulkUpdate(isUrgent ? 'mark items as urgent' : 'mark items as not urgent', (note) => ({
+      ...note,
+      isUrgent,
+      updatedAt: Date.now()
+    }));
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedNoteIds.size === 0) return;
+    if (!confirmBulkAction(`Delete ${selectedNoteIds.size} item${selectedNoteIds.size === 1 ? '' : 's'} (including sub-items)? This cannot be undone.`)) {
+      return;
+    }
+    const ids = Array.from(selectedNoteIds);
+    ids.forEach(id => deleteNote(id));
+    clearSelection();
+  };
   const groupedNotes = getGroupedNotes(topLevelNotes);
 
   return (
@@ -1907,7 +2238,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
               </div>
               
               {/* Applied Tags Bubbles */}
-              {(appliedTags.type !== 'note' || appliedTags.isUrgent || appliedTags.dueDate || appliedTags.projectId) && (
+              {(appliedTags.type !== 'note' || appliedTags.isUrgent || appliedTags.dueDate || (appliedTags.projectIds && appliedTags.projectIds.length > 0)) && (
                 <div className="flex flex-wrap gap-2 items-center">
                   {/* Type Tag */}
                   {appliedTags.type !== 'note' && (
@@ -1953,20 +2284,22 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                   )}
                   
                   {/* Project Tag */}
-                  {appliedTags.projectId && (
-                    <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">
-                      <Folder size={12} />
-                      <span className="font-medium">
-                        {data.projects.find(p => p.id === appliedTags.projectId)?.name}
-                      </span>
-                      <button
-                        onClick={() => removeTag('project')}
-                        className="hover:bg-green-200 rounded-full p-0.5"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                  )}
+                  {appliedTags.projectIds && appliedTags.projectIds.map(projectId => {
+                    const project = data.projects.find(p => p.id === projectId);
+                    if (!project) return null;
+                    return (
+                      <div key={projectId} className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">
+                        <Folder size={12} />
+                        <span className="font-medium">{project.name}</span>
+                        <button
+                          onClick={() => removeTag('project', projectId)}
+                          className="hover:bg-green-200 rounded-full p-0.5"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2030,6 +2363,112 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             )}
 
           </div>
+
+          {selectedCount > 0 && (
+            <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3 flex flex-wrap items-center gap-3 text-sm">
+              <span className="font-medium text-blue-900">{selectedCount} selected</span>
+              <select
+                value=""
+                onChange={(e) => {
+                  const { value } = e.target;
+                  if (!value) return;
+                  handleBulkStatusChange(value);
+                }}
+                className="px-2 py-1 border border-blue-200 rounded"
+              >
+                <option value="">Set Status…</option>
+                {STATUS_ORDER.map(statusId => (
+                  <option key={statusId} value={statusId}>{STATUS_LABELS[statusId]}</option>
+                ))}
+              </select>
+              <select
+                value=""
+                onChange={(e) => {
+                  const { value } = e.target;
+                  if (!value) return;
+                  handleBulkTypeChange(value);
+                }}
+                className="px-2 py-1 border border-blue-200 rounded"
+              >
+                <option value="">Set Type…</option>
+                {data.noteTypes.map(type => (
+                  <option key={type.id} value={type.id}>{type.name}</option>
+                ))}
+              </select>
+              <select
+                value=""
+                onChange={(e) => {
+                  const { value } = e.target;
+                  if (!value) return;
+                  handleBulkProjectAdd(value);
+                }}
+                className="px-2 py-1 border border-blue-200 rounded"
+              >
+                <option value="">Add Project…</option>
+                {data.projects.map(project => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+              <select
+                value=""
+                onChange={(e) => {
+                  const { value } = e.target;
+                  if (!value) return;
+                  handleBulkProjectRemove(value);
+                }}
+                className="px-2 py-1 border border-blue-200 rounded"
+              >
+                <option value="">Remove Project…</option>
+                <option value="__ALL__">Remove All</option>
+                {data.projects.map(project => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+              <select
+                value=""
+                onChange={(e) => {
+                  const { value } = e.target;
+                  handleBulkSessionChange(value);
+                }}
+                className="px-2 py-1 border border-blue-200 rounded"
+              >
+                <option value="">Set Session…</option>
+                <option value="__NONE__">No Session</option>
+                {data.sessions.map(session => (
+                  <option key={session.id} value={session.id}>{session.title}</option>
+                ))}
+              </select>
+              <select
+                value=""
+                onChange={(e) => {
+                  const { value } = e.target;
+                  if (!value) return;
+                  handleBulkUrgentChange(value);
+                }}
+                className="px-2 py-1 border border-blue-200 rounded"
+              >
+                <option value="">Urgent…</option>
+                <option value="yes">Mark Urgent</option>
+                <option value="no">Mark Not Urgent</option>
+              </select>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleBulkDelete}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded"
+                >
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  className="px-3 py-1.5 border border-blue-200 text-blue-700 hover:bg-blue-100 rounded"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </header>
       
@@ -2048,6 +2487,16 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                       className="grid items-center gap-3 px-3 py-2 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-600 select-none rounded-t-lg"
                       style={{ gridTemplateColumns }}
                     >
+                      <div className="flex items-center justify-center">
+                        <input
+                          ref={selectAllRef}
+                          type="checkbox"
+                          className="h-4 w-4"
+                          checked={allVisibleSelected && visibleNoteIds.length > 0}
+                          disabled={visibleNoteIds.length === 0}
+                          onChange={toggleSelectAllVisible}
+                        />
+                      </div>
                       <div className="flex items-center gap-2 bg-gray-100 px-2 py-1 rounded-md">
                         <span>Item</span>
                         <span
@@ -2777,7 +3226,14 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
     : 'note';
   const [content, setContent] = useState(note?.content || '');
   const [type, setType] = useState(fallbackType);
-  const [projectId, setProjectId] = useState(note?.projectId || selectedProject || '');
+  const initialProjectIds = note?.projectIds
+    ? note.projectIds
+    : note?.projectId
+      ? [note.projectId]
+      : selectedProject
+        ? [selectedProject]
+        : [];
+  const [projectIds, setProjectIds] = useState(initialProjectIds);
   const [dueDate, setDueDate] = useState(note?.dueDate ? new Date(note.dueDate).toISOString().slice(0, 16) : '');
   const [status, setStatus] = useState(normalizeStatus(note?.status));
   const [isUrgent, setIsUrgent] = useState(note?.isUrgent || false);
@@ -2808,7 +3264,7 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
         ...(note || {}),
         content,
         type,
-        projectId: projectId || null,
+        projectIds,
         dueDate: dueDate ? new Date(dueDate).getTime() : null,
         status: normalizeStatus(status),
         isUrgent
@@ -2854,17 +3310,35 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
           </div>
           {!note?.parentId && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
-              <select
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">No project</option>
-                {projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Projects</label>
+              <div className="flex flex-wrap gap-2 items-center">
+                {projects.map(project => {
+                  const checked = projectIds.includes(project.id);
+                  return (
+                    <label key={project.id} className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border ${checked ? 'bg-green-100 border-green-300 text-green-700' : 'bg-gray-100 border-gray-200 text-gray-600'}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          setProjectIds(prev => {
+                            const set = new Set(prev);
+                            if (e.target.checked) {
+                              set.add(project.id);
+                            } else {
+                              set.delete(project.id);
+                            }
+                            return Array.from(set);
+                          });
+                        }}
+                      />
+                      <span>{project.name}</span>
+                    </label>
+                  );
+                })}
+                {projects.length === 0 && (
+                  <span className="text-gray-500 text-xs">No projects yet</span>
+                )}
+              </div>
             </div>
           )}
           {showDueDate && (

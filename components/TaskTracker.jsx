@@ -124,6 +124,14 @@ const initialData = {
   }
 };
 
+const UI_FLAGS = Object.freeze({
+  enhancedRowHierarchy: true,
+  stickyTableHeader: true,
+  groupSectionFraming: true,
+  persistentActionIconBackgrounds: true,
+  controlBarElevation: true
+});
+
 export default function TaskTracker() {
   const [data, setData] = useState(initialData);
   const [quickEntry, setQuickEntry] = useState('');
@@ -574,6 +582,12 @@ Rules:
     }, 0);
     return Math.max(640, SELECTION_COLUMN_WIDTH + primaryWidth + otherWidth);
   }, [visibleColumns, columnWidths, itemColumnWidth]);
+
+  const headerStickyClasses = UI_FLAGS.stickyTableHeader ? 'sticky top-0 z-20 shadow-sm' : '';
+  const actionBarClasses = UI_FLAGS.controlBarElevation
+    ? 'flex flex-wrap items-center gap-2 mt-4 bg-white/90 border border-gray-200 rounded-xl shadow-sm px-3 py-3'
+    : 'flex flex-wrap items-center gap-2 mt-4';
+
 
   const handleColumnDragStart = (event, columnId) => {
     columnDragIdRef.current = columnId;
@@ -1836,6 +1850,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     const depthTintPalette = ['bg-white', 'bg-rose-50', 'bg-amber-50', 'bg-emerald-50', 'bg-sky-50'];
     const depthTintClass = depthTintPalette[Math.min(depthLevel, depthTintPalette.length - 1)];
     const rowKey = isNoteRow ? `note-${note.id}` : `comment-${comment.id}`;
+    const isNoteUrgent = isNoteRow && !!note.isUrgent;
     const noteProjectIds = isNoteRow
       ? (Array.isArray(note.projectIds)
           ? note.projectIds
@@ -1946,14 +1961,32 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     if (isNoteRow) {
       if (isSelected) {
         rowBackgroundClass = depthLevel > 0 ? 'bg-blue-100' : 'bg-blue-50';
-      } else if (note.isUrgent) {
+      } else if (isNoteUrgent) {
         rowBackgroundClass = 'bg-red-50';
       } else {
         rowBackgroundClass = depthTintClass;
       }
     }
-    const hoverClass = isNoteRow && !isSelected && !note.isUrgent ? 'hover:bg-gray-100' : '';
-    const rowClassName = `grid items-stretch gap-0 border-b border-gray-200 transition-colors ${rowBackgroundClass} ${hoverClass}`;
+    const hoverClass = isNoteRow && !isSelected && !isNoteUrgent ? 'hover:bg-gray-100' : '';
+    const accentBorderClass = UI_FLAGS.enhancedRowHierarchy
+      ? (isSelected
+          ? 'border-l-4 border-blue-400 shadow-sm'
+          : isNoteUrgent
+            ? 'border-l-4 border-red-300'
+            : depthLevel > 0
+              ? 'border-l-4 border-sky-200'
+              : 'border-l-4 border-transparent')
+      : '';
+    const rowClassName = `grid items-stretch gap-0 border-b border-gray-200 transition-colors ${rowBackgroundClass} ${hoverClass} ${accentBorderClass}`;
+    const iconButtonBaseClasses = UI_FLAGS.persistentActionIconBackgrounds
+      ? 'inline-flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-500 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-blue-200'
+      : 'inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-300';
+    const iconButtonAccentClasses = UI_FLAGS.persistentActionIconBackgrounds
+      ? 'hover:bg-blue-200 hover:text-blue-700'
+      : 'hover:text-blue-600 hover:bg-blue-50';
+    const iconButtonDeleteClasses = UI_FLAGS.persistentActionIconBackgrounds
+      ? 'hover:bg-red-200 hover:text-red-700 focus:ring-red-200'
+      : 'text-gray-400 hover:text-red-600 hover:bg-red-50 focus:ring-red-200';
 
     const selectionCell = (
       <div className="relative flex items-center justify-center px-4 py-3 border-r border-gray-200">
@@ -2157,14 +2190,14 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                         setEditingNote(note);
                         setShowNoteModal(true);
                       }}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      className={`${iconButtonBaseClasses} ${iconButtonAccentClasses}`}
                       aria-label="Edit"
                     >
                       <Edit2 size={16} />
                     </button>
                     <button
                       onClick={() => deleteNote(note.id)}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200"
+                      className={`${iconButtonBaseClasses} ${iconButtonDeleteClasses}`}
                       aria-label="Delete"
                     >
                       <Trash2 size={16} />
@@ -2620,7 +2653,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           </div>
           
           {/* Action Bar */}
-          <div className="flex flex-wrap items-center gap-2 mt-4">
+          <div className={actionBarClasses}>
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setShowProjectModal(true)}
@@ -2823,13 +2856,15 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           notes.length > 0 && (
             <div key={groupName} className="mb-6">
               {groupBy !== 'none' && (
-                <h2 className="text-lg font-semibold text-gray-700 mb-3">{groupName}</h2>
+                <div className={UI_FLAGS.groupSectionFraming ? 'flex items-center justify-between mb-3 bg-white border border-gray-200 rounded-lg px-4 py-2 shadow-sm' : 'mb-3'}>
+                  <h2 className="text-lg font-semibold text-gray-700">{groupName}</h2>
+                </div>
               )}
               <div className="bg-white border border-gray-200 rounded-lg">
                 <div className="overflow-x-auto">
                   <div style={{ minWidth: `${gridMinWidth}px` }}>
                     <div
-                      className="grid items-stretch gap-0 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-700 select-none rounded-t-lg"
+                      className={`grid items-stretch gap-0 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-700 select-none rounded-t-lg ${headerStickyClasses}`}
                       style={{ gridTemplateColumns }}
                     >
                       <div className="relative flex items-center justify-center px-4 py-3 border-r border-gray-200 bg-gray-100">

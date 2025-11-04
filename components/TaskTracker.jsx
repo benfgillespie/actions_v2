@@ -2201,6 +2201,30 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     }
   }, [someVisibleSelected]);
 
+  const toggleNoteSelection = (noteId) => {
+    setSelectedNoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(noteId)) {
+        next.delete(noteId);
+      } else {
+        next.add(noteId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = useCallback(() => {
+    setSelectedNoteIds(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleNoteIds.forEach(id => next.delete(id));
+      } else {
+        visibleNoteIds.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  }, [allVisibleSelected, visibleNoteIds]);
+
   useEffect(() => {
     const handleGlobalShortcut = (event) => {
       if (event.defaultPrevented) return;
@@ -2240,30 +2264,6 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     window.addEventListener('keydown', handleGlobalShortcut);
     return () => window.removeEventListener('keydown', handleGlobalShortcut);
   }, [toggleSelectAllVisible]);
-
-  const toggleNoteSelection = (noteId) => {
-    setSelectedNoteIds(prev => {
-      const next = new Set(prev);
-      if (next.has(noteId)) {
-        next.delete(noteId);
-      } else {
-        next.add(noteId);
-      }
-      return next;
-    });
-  };
-
-  const toggleSelectAllVisible = useCallback(() => {
-    setSelectedNoteIds(prev => {
-      const next = new Set(prev);
-      if (allVisibleSelected) {
-        visibleNoteIds.forEach(id => next.delete(id));
-      } else {
-        visibleNoteIds.forEach(id => next.add(id));
-      }
-      return next;
-    });
-  }, [allVisibleSelected, visibleNoteIds]);
 
   const clearSelection = () => {
     setSelectedNoteIds(new Set());

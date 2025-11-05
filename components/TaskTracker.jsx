@@ -151,6 +151,7 @@ export default function TaskTracker() {
   const [itemColumnWidth, setItemColumnWidth] = useState(380);
   const [selectedNoteIds, setSelectedNoteIds] = useState(() => new Set());
   const [showColumnMenu, setShowColumnMenu] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingDueDate, setPendingDueDate] = useState(null);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
@@ -164,12 +165,15 @@ export default function TaskTracker() {
   const datePickerRef = useRef(null);
   const selectAllRef = useRef(null);
   const searchInputRef = useRef(null);
+  const projectPickerRef = useRef(null);
+  const projectPickerInputRef = useRef(null);
   const hasInitializedRef = useRef(false);
   const lastSavedSnapshotRef = useRef(null);
   const saveTimeoutRef = useRef(null);
   const saveAbortControllerRef = useRef(null);
   const columnDragIdRef = useRef(null);
   const columnResizeStateRef = useRef(null);
+  const [projectPickerState, setProjectPickerState] = useState({ noteId: null, query: '' });
 
   const ensureDefaultNoteTypes = (types = []) => {
     const baseList = Array.isArray(types) ? types.filter(t => t && t.id && t.id !== 'deliverable') : [];
@@ -1442,6 +1446,84 @@ Rules:
     }));
   };
 
+  const openProjectPicker = (noteId) => {
+    setProjectPickerState({ noteId, query: '' });
+  };
+
+  const closeProjectPicker = () => {
+    setProjectPickerState({ noteId: null, query: '' });
+  };
+
+  const updateProjectPickerQuery = (value) => {
+    setProjectPickerState(prev => ({
+      ...prev,
+      query: value
+    }));
+  };
+
+  const createAndAssignProjectToNote = (noteId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setData(prev => {
+      const lower = trimmed.toLowerCase();
+      let project = prev.projects.find(p => (p.name || '').toLowerCase() === lower);
+      let nextProjects = prev.projects;
+      if (!project) {
+        project = {
+          id: generateId(),
+          name: trimmed,
+          details: '',
+          customProperties: {},
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        nextProjects = [...prev.projects, project];
+      }
+      return {
+        ...prev,
+        projects: nextProjects,
+        notes: prev.notes.map(note => {
+          if (note.id !== noteId) return note;
+          const currentIds = Array.isArray(note.projectIds)
+            ? [...note.projectIds]
+            : note.projectId
+              ? [note.projectId]
+              : [];
+          if (!currentIds.includes(project.id)) {
+            currentIds.push(project.id);
+          }
+          return {
+            ...note,
+            projectIds: currentIds,
+            updatedAt: Date.now()
+          };
+        })
+      };
+    });
+  };
+
+  const assignExistingProjectToNote = (noteId, projectId) => {
+    addProjectToNote(noteId, projectId);
+    closeProjectPicker();
+  };
+
+  const createProjectForNote = (noteId, name) => {
+    createAndAssignProjectToNote(noteId, name);
+    closeProjectPicker();
+  };
+
+  const toggleGroupCollapse = useCallback((groupName) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupName)) {
+        next.delete(groupName);
+      } else {
+        next.add(groupName);
+      }
+      return next;
+    });
+  }, []);
+
   // Delete note
   const deleteNote = (noteId) => {
     const deleteRecursive = (id) => {
@@ -1761,6 +1843,28 @@ Rules:
     return { 'All Items': topLevelNotes };
   };
 
+  const recentProjects = useMemo(() => {
+    const timestamps = new Map();
+    data.projects.forEach(project => {
+      timestamps.set(project.id, project.updatedAt || project.createdAt || 0);
+    });
+    data.notes.forEach(note => {
+      const ids = Array.isArray(note.projectIds)
+        ? note.projectIds
+        : note.projectId
+          ? [note.projectId]
+          : [];
+      const referenceTime = note.updatedAt || note.createdAt || 0;
+      ids.forEach(id => {
+        const current = timestamps.get(id) || 0;
+        if (referenceTime > current) {
+          timestamps.set(id, referenceTime);
+        }
+      });
+    });
+    return [...data.projects].sort((a, b) => (timestamps.get(b.id) || 0) - (timestamps.get(a.id) || 0));
+  }, [data.projects, data.notes]);
+
   const buildNoteRows = (note, depth = 0, visibleNotesSet, matchingNotesSet) => {
     const childCandidates = data.notes
       .filter(n => n.parentId === note.id)
@@ -2029,48 +2133,160 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
               );
             }
             const availableProjects = data.projects.filter(p => !noteProjectIds.includes(p.id));
+            const isProjectPickerOpen = projectPickerState.noteId === note.id;
+            const pickerQuery = isProjectPickerOpen ? projectPickerState.query : '';
+            const normalizedPickerQuery = pickerQuery.trim().toLowerCase();
+            const filteredProjects = normalizedPickerQuery
+              ? availableProjects.filter(project =>
+                  (project.name || '').toLowerCase().includes(normalizedPickerQuery)
+                )
+              : availableProjects;
+            const recentAvailableProjects = recentProjects
+              .filter(project => !noteProjectIds.includes(project.id))
+              .slice(0, 5);
+            const canCreateProject = normalizedPickerQuery.length > 0 &&
+              !data.projects.some(project => (project.name || '').toLowerCase() === normalizedPickerQuery);
+
+            const handleProjectPickerSubmit = () => {
+              const trimmed = pickerQuery.trim();
+              if (!trimmed) {
+                if (filteredProjects.length > 0) {
+                  assignExistingProjectToNote(note.id, filteredProjects[0].id);
+                } else {
+                  closeProjectPicker();
+                }
+                return;
+              }
+              const lower = trimmed.toLowerCase();
+              if (availableProjects.some(project => (project.name || '').toLowerCase() === lower)) {
+                const target = availableProjects.find(project => (project.name || '').toLowerCase() === lower);
+                if (target) {
+                  assignExistingProjectToNote(note.id, target.id);
+                  return;
+                }
+              }
+              const partialMatch = availableProjects.find(project =>
+                (project.name || '').toLowerCase().includes(lower)
+              );
+              if (partialMatch) {
+                assignExistingProjectToNote(note.id, partialMatch.id);
+                return;
+              }
+              createProjectForNote(note.id, trimmed);
+            };
+
             return (
               <div
                 key={`${rowKey}-project`}
                 className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
               >
-                <div className="flex flex-wrap items-center gap-1">
-                  {projectEntities.length === 0 && (
-                    <span className="text-gray-400">—</span>
+                <div className="flex flex-wrap items-start gap-2">
+                  {projectEntities.length === 0 ? (
+                    <span className="text-gray-400 pt-0.5">—</span>
+                  ) : (
+                    projectEntities.map(project => (
+                      <span
+                        key={project.id}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700"
+                      >
+                        <Folder size={12} /> {project.name}
+                        <button
+                          type="button"
+                          onClick={() => removeProjectFromNote(note.id, project.id)}
+                          className="hover:bg-green-200 rounded-full p-0.5"
+                          aria-label={`Remove ${project.name}`}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))
                   )}
-                  {projectEntities.map(project => (
-                    <span
-                      key={project.id}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700"
-                    >
-                      <Folder size={12} /> {project.name}
+                  <button
+                    type="button"
+                    data-project-picker-trigger="true"
+                    onClick={() => {
+                      if (isProjectPickerOpen) {
+                        closeProjectPicker();
+                      } else {
+                        openProjectPicker(note.id);
+                      }
+                    }}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-green-500 text-white hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-300"
+                    aria-label="Add project"
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
+                {isProjectPickerOpen && (
+                  <div
+                    ref={projectPickerRef}
+                    className="absolute left-0 top-full z-30 mt-2 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg"
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={projectPickerInputRef}
+                        value={pickerQuery}
+                        onChange={(event) => updateProjectPickerQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            handleProjectPickerSubmit();
+                          }
+                          if (event.key === 'Escape') {
+                            event.preventDefault();
+                            closeProjectPicker();
+                          }
+                        }}
+                        className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                        placeholder="Search or create project…"
+                      />
+                    </div>
+                    {recentAvailableProjects.length > 0 && (
+                      <div className="mt-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                          Recent
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {recentAvailableProjects.map(project => (
+                            <button
+                              key={`recent-${project.id}`}
+                              type="button"
+                              onClick={() => assignExistingProjectToNote(note.id, project.id)}
+                              className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100"
+                            >
+                              <Folder size={12} /> {project.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="mt-3 max-h-40 overflow-y-auto space-y-1">
+                      {filteredProjects.length > 0 ? (
+                        filteredProjects.map(project => (
+                          <button
+                            key={`match-${project.id}`}
+                            type="button"
+                            onClick={() => assignExistingProjectToNote(note.id, project.id)}
+                            className="w-full rounded px-2 py-1 text-left text-sm text-gray-700 hover:bg-green-50"
+                          >
+                            {project.name}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="text-xs text-gray-400">No matching projects.</p>
+                      )}
+                    </div>
+                    {canCreateProject && (
                       <button
                         type="button"
-                        onClick={() => removeProjectFromNote(note.id, project.id)}
-                        className="hover:bg-green-200 rounded-full p-0.5"
-                        aria-label={`Remove ${project.name}`}
+                        onClick={() => createProjectForNote(note.id, pickerQuery)}
+                        className="mt-3 w-full rounded border border-green-200 px-2 py-1 text-sm font-medium text-green-700 hover:bg-green-50"
                       >
-                        <X size={12} />
+                        Create "{pickerQuery.trim()}"
                       </button>
-                    </span>
-                  ))}
-                  {availableProjects.length > 0 && (
-                    <select
-                      value=""
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (!value) return;
-                        addProjectToNote(note.id, value);
-                      }}
-                      className="text-xs border border-green-200 rounded px-1 py-0.5 text-green-700 bg-green-50 focus:outline-none"
-                    >
-                      <option value="">+ Add Project</option>
-                      {availableProjects.map(project => (
-                        <option key={project.id} value={project.id}>{project.name}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           }
@@ -2203,6 +2419,27 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       selectAllRef.current.indeterminate = someVisibleSelected;
     }
   }, [someVisibleSelected]);
+
+  useEffect(() => {
+    setCollapsedGroups(new Set());
+  }, [groupBy]);
+
+  useEffect(() => {
+    if (!projectPickerState.noteId) return;
+    const handleClickOutside = (event) => {
+      if (projectPickerRef.current && projectPickerRef.current.contains(event.target)) return;
+      if (event.target.closest('[data-project-picker-trigger="true"]')) return;
+      setProjectPickerState({ noteId: null, query: '' });
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [projectPickerState.noteId]);
+
+  useEffect(() => {
+    if (projectPickerState.noteId && projectPickerInputRef.current) {
+      projectPickerInputRef.current.focus();
+    }
+  }, [projectPickerState.noteId]);
 
   const toggleNoteSelection = (noteId) => {
     setSelectedNoteIds(prev => {
@@ -2742,19 +2979,6 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
               <option value="due_date">Group by Due Date</option>
             </select>
             
-            {data.projects.length > 0 && (
-              <select
-                value={selectedProject || ''}
-                onChange={(e) => setSelectedProject(e.target.value || null)}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">All Projects</option>
-                {data.projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            )}
-
           </div>
 
           {selectedCount > 0 && (
@@ -2867,118 +3091,132 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       
       {/* Main Content */}
       <main className="mx-auto w-[90%] py-6">
-        {Object.entries(groupedNotes).map(([groupName, notes]) => (
-          notes.length > 0 && (
+        {Object.entries(groupedNotes).map(([groupName, notes]) => {
+          if (notes.length === 0) return null;
+          const isGroupCollapsed = groupBy !== 'none' && collapsedGroups.has(groupName);
+          return (
             <div key={groupName} className="mb-6">
               {groupBy !== 'none' && (
-                <h2 className="text-lg font-semibold text-gray-700 mb-3">{groupName}</h2>
+                <div className="mb-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroupCollapse(groupName)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    aria-label={isGroupCollapsed ? `Expand ${groupName}` : `Collapse ${groupName}`}
+                  >
+                    {isGroupCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                  </button>
+                  <h2 className="text-lg font-semibold text-gray-700">{groupName}</h2>
+                </div>
               )}
-              <div className="bg-white border border-gray-200 rounded-lg">
-                <div className="overflow-x-auto">
-                  <div style={{ minWidth: `${gridMinWidth}px` }}>
-                    <div
-                      className="grid items-stretch gap-0 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-700 select-none rounded-t-lg"
-                      style={{ gridTemplateColumns }}
-                    >
-                      <div className="relative flex items-center justify-center px-4 py-3 border-r border-gray-200 bg-gray-100">
-                        <input
-                          ref={selectAllRef}
-                          type="checkbox"
-                          className="h-4 w-4"
-                          checked={allVisibleSelected && visibleNoteIds.length > 0}
-                          disabled={visibleNoteIds.length === 0}
-                          onChange={toggleSelectAllVisible}
-                          aria-label="Select all visible items"
-                        />
-                      </div>
-                      <div className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${visibleColumns.length > 0 ? 'border-r border-gray-200' : ''}`}>
-                        <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 cursor-not-allowed"
-                            aria-label="Item column"
-                            disabled
-                          >
-                            <GripVertical size={14} aria-hidden="true" />
-                          </button>
-                          <span className="text-gray-700">Item</span>
-                        </div>
-                        {visibleColumns.length > 0 && (
-                          <button
-                            type="button"
-                            onMouseDown={(event) => handleColumnResizeMouseDown(event, '__item__')}
-                            className="absolute top-0 right-0 h-full w-2 cursor-col-resize"
-                            aria-label="Resize Item column"
+              {(!isGroupCollapsed || groupBy === 'none') && (
+                <div className="bg-white border border-gray-200 rounded-lg">
+                  <div className="overflow-x-auto">
+                    <div style={{ minWidth: `${gridMinWidth}px` }}>
+                      <div
+                        className="grid items-stretch gap-0 border-b border-gray-200 bg-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-700 select-none rounded-t-lg"
+                        style={{ gridTemplateColumns }}
+                      >
+                        <div className="relative flex items-center justify-center px-4 py-3 border-r border-gray-200 bg-gray-100">
+                          <input
+                            ref={selectAllRef}
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={allVisibleSelected && visibleNoteIds.length > 0}
+                            disabled={visibleNoteIds.length === 0}
+                            onChange={toggleSelectAllVisible}
+                            aria-label="Select all visible items"
                           />
-                        )}
-                      </div>
-                      {visibleColumns.map((column, index) => {
-                        const draggable = !column.alwaysVisible || column.id !== 'actions';
-                        const isSorted = sortConfig.columnId === column.id;
-                        const isLast = index === visibleColumns.length - 1;
-                        return (
-                          <div
-                            key={`header-${column.id}`}
-                            className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${!isLast ? 'border-r border-gray-200' : ''}`}
-                            onDragOver={(event) => handleColumnDragOver(event, column.id)}
-                            onDrop={(event) => handleColumnDrop(event, column.id)}
-                          >
-                            <div className="flex items-center gap-3">
-                              <button
-                                type="button"
-                                className={`inline-flex h-8 w-8 items-center justify-center rounded-md ${draggable ? 'cursor-grab text-gray-400 hover:text-gray-600' : 'cursor-not-allowed text-gray-300'}`}
-                                aria-label={`Drag ${column.label} column`}
-                                draggable={draggable}
-                                onDragStart={(event) => draggable && handleColumnDragStart(event, column.id)}
-                                onDragEnd={handleColumnDragEnd}
-                              >
-                                <GripVertical size={14} aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleSort(column.id)}
-                                className={`flex items-center gap-1 text-left text-gray-700 bg-transparent ${column.id === 'actions' ? 'cursor-default' : 'cursor-pointer'}`}
-                                disabled={column.id === 'actions'}
-                              >
-                                <span>{column.label}</span>
-                                {column.id !== 'actions' && (
-                                  <span className="text-gray-400">
-                                    {isSorted ? (sortConfig.direction === 'asc' ? '↑' : '↓') : <ArrowUpDown size={14} />}
-                                  </span>
-                                )}
-                              </button>
-                            </div>
-                            {column.filterable && column.id !== 'actions' ? (
-                              <select
-                                value={columnFilters[column.id] || ''}
-                                onChange={(event) => handleColumnFilterChange(column.id, event.target.value)}
-                                className="text-xs border border-gray-300 rounded px-2 py-1 text-gray-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                              >
-                                <option value="">All</option>
-                                {renderColumnFilterOptions(column.id)}
-                              </select>
-                            ) : (
-                              <span className="block h-1" />
-                            )}
+                        </div>
+                        <div className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${visibleColumns.length > 0 ? 'border-r border-gray-200' : ''}`}>
+                          <div className="flex items-center gap-3">
                             <button
                               type="button"
-                              onMouseDown={(event) => handleColumnResizeMouseDown(event, column.id)}
-                              className="absolute top-0 right-0 h-full w-2 cursor-col-resize"
-                              aria-label={`Resize ${column.label} column`}
-                            />
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 cursor-not-allowed"
+                              aria-label="Item column"
+                              disabled
+                            >
+                              <GripVertical size={14} aria-hidden="true" />
+                            </button>
+                            <span className="text-gray-700">Item</span>
                           </div>
-                        );
-                      })}
+                          {visibleColumns.length > 0 && (
+                            <button
+                              type="button"
+                              onMouseDown={(event) => handleColumnResizeMouseDown(event, '__item__')}
+                              className="absolute top-0 right-0 h-full w-2 cursor-col-resize"
+                              aria-label="Resize Item column"
+                            />
+                          )}
+                        </div>
+                        {visibleColumns.map((column, index) => {
+                          const draggable = !column.alwaysVisible || column.id !== 'actions';
+                          const isSorted = sortConfig.columnId === column.id;
+                          const isLast = index === visibleColumns.length - 1;
+                          return (
+                            <div
+                              key={`header-${column.id}`}
+                              className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${!isLast ? 'border-r border-gray-200' : ''} ${column.id === 'actions' ? 'pr-6' : ''}`}
+                              onDragOver={(event) => handleColumnDragOver(event, column.id)}
+                              onDrop={(event) => handleColumnDrop(event, column.id)}
+                            >
+                              <div className="flex items-center gap-3">
+                                <button
+                                  type="button"
+                                  className={`inline-flex h-8 w-8 items-center justify-center rounded-md ${draggable ? 'cursor-grab text-gray-400 hover:text-gray-600' : 'cursor-not-allowed text-gray-300'}`}
+                                  aria-label={`Drag ${column.label} column`}
+                                  draggable={draggable}
+                                  onDragStart={(event) => draggable && handleColumnDragStart(event, column.id)}
+                                  onDragEnd={handleColumnDragEnd}
+                                >
+                                  <GripVertical size={14} aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSort(column.id)}
+                                  className={`flex items-center gap-1 text-left text-gray-700 bg-transparent ${column.id === 'actions' ? 'cursor-default' : 'cursor-pointer'}`}
+                                  disabled={column.id === 'actions'}
+                                >
+                                  <span>{column.label}</span>
+                                  {column.id !== 'actions' && (
+                                    <span className="text-gray-400">
+                                      {isSorted ? (sortConfig.direction === 'asc' ? '↑' : '↓') : <ArrowUpDown size={14} />}
+                                    </span>
+                                  )}
+                                </button>
+                              </div>
+                              {column.filterable && column.id !== 'actions' ? (
+                                <select
+                                  value={columnFilters[column.id] || ''}
+                                  onChange={(event) => handleColumnFilterChange(column.id, event.target.value)}
+                                  className="text-xs border border-gray-300 rounded px-2 py-1 text-gray-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                >
+                                  <option value="">All</option>
+                                  {renderColumnFilterOptions(column.id)}
+                                </select>
+                              ) : (
+                                <span className="block h-1" />
+                              )}
+                              <button
+                                type="button"
+                                onMouseDown={(event) => handleColumnResizeMouseDown(event, column.id)}
+                                className="absolute top-0 right-0 h-full w-2 cursor-col-resize"
+                                aria-label={`Resize ${column.label} column`}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {notes
+                        .flatMap(note => buildNoteRows(note, 0, visibleNotes, matchingNotes))
+                        .map(row => renderRow(row, gridTemplateColumns, visibleColumns))}
                     </div>
-                    {notes
-                      .flatMap(note => buildNoteRows(note, 0, visibleNotes, matchingNotes))
-                      .map(row => renderRow(row, gridTemplateColumns, visibleColumns))}
                   </div>
                 </div>
-              </div>
+              )}
             </div>
-          )
-        ))}
+          );
+        })}
         
         {topLevelNotes.length === 0 && (
           <div className="text-center py-12">

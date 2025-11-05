@@ -1,9 +1,13 @@
 "use client";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square, ArrowUpDown, GripVertical, Search } from 'lucide-react';
+import { Plus, Folder, Calendar, Clock, AlertCircle, MessageSquare, ChevronDown, ChevronRight, X, Edit2, Trash2, Play, Square, ArrowUpDown, GripVertical, Search, RotateCcw } from 'lucide-react';
 
 // Utility functions
 const generateId = () => Math.random().toString(36).substr(2, 9);
+const cloneDeep = (value) =>
+  typeof structuredClone === 'function'
+    ? structuredClone(value)
+    : JSON.parse(JSON.stringify(value));
 const formatDate = (timestamp) => {
   if (!timestamp) return '';
   const date = new Date(timestamp);
@@ -174,6 +178,7 @@ export default function TaskTracker() {
   const columnDragIdRef = useRef(null);
   const columnResizeStateRef = useRef(null);
   const [projectPickerState, setProjectPickerState] = useState({ noteId: null, query: '' });
+  const [lastUndo, setLastUndo] = useState(null);
 
   const projectsById = useMemo(() => {
     const map = new Map();
@@ -1585,25 +1590,82 @@ Rules:
     });
   }, []);
 
+  const removeNotesAndComments = (rootIds, sourceNotes, sourceComments) => {
+    const childrenByParent = new Map();
+    sourceNotes.forEach(note => {
+      const parentId = note.parentId || null;
+      if (!childrenByParent.has(parentId)) {
+        childrenByParent.set(parentId, []);
+      }
+      childrenByParent.get(parentId).push(note.id);
+    });
+
+    const toRemove = new Set();
+    const stack = Array.isArray(rootIds) ? [...rootIds] : [];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current || toRemove.has(current)) continue;
+      toRemove.add(current);
+      const children = childrenByParent.get(current);
+      if (children && children.length > 0) {
+        stack.push(...children);
+      }
+    }
+
+    if (toRemove.size === 0) {
+      return {
+        remainingNotes: sourceNotes,
+        remainingComments: sourceComments,
+        removedIds: toRemove
+      };
+    }
+
+    const remainingNotes = sourceNotes.filter(note => !toRemove.has(note.id));
+    const remainingComments = sourceComments.filter(comment => !toRemove.has(comment.noteId));
+    return { remainingNotes, remainingComments, removedIds: toRemove };
+  };
+
+  const captureUndoSnapshot = useCallback(() => ({
+    data: cloneDeep(data),
+    selectedNoteIds: Array.from(selectedNoteIds)
+  }), [data, selectedNoteIds]);
+
+  const registerUndo = useCallback((label, snapshot) => {
+    setLastUndo({ label, snapshot });
+  }, []);
+
+  const deleteNotesByIds = (noteIds, description = 'Delete items') => {
+    const ids = Array.isArray(noteIds) ? noteIds.filter(Boolean) : [];
+    if (ids.length === 0) return;
+    const snapshot = captureUndoSnapshot();
+    let removedIds = new Set();
+    setData(prev => {
+      const result = removeNotesAndComments(ids, prev.notes, prev.comments);
+      removedIds = result.removedIds;
+      if (removedIds.size === 0) {
+        return prev;
+      }
+      return {
+        ...prev,
+        notes: result.remainingNotes,
+        comments: result.remainingComments
+      };
+    });
+    if (!removedIds || removedIds.size === 0) return;
+    setSelectedNoteIds(prev => {
+      const next = new Set(prev);
+      removedIds.forEach(id => next.delete(id));
+      return next;
+    });
+    if (projectPickerState.noteId && removedIds.has(projectPickerState.noteId)) {
+      setProjectPickerState({ noteId: null, query: '' });
+    }
+    registerUndo(description, snapshot);
+  };
+
   // Delete note
   const deleteNote = (noteId) => {
-    const deleteRecursive = (id) => {
-      const children = data.notes.filter(n => n.parentId === id);
-      children.forEach(child => deleteRecursive(child.id));
-      
-      setData(prev => ({
-        ...prev,
-        notes: prev.notes.filter(n => n.id !== id),
-        comments: prev.comments.filter(c => c.noteId !== id)
-      }));
-      setSelectedNoteIds(prev => {
-        if (!prev.has(id)) return prev;
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    };
-    deleteRecursive(noteId);
+    deleteNotesByIds([noteId], 'Delete note');
   };
 
   const handleDeleteFromModal = (noteId) => {
@@ -2522,6 +2584,19 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     }
   }, [projectPickerState.noteId]);
 
+  const handleUndo = useCallback(() => {
+    if (!lastUndo) return;
+    const { snapshot } = lastUndo;
+    if (snapshot?.data) {
+      setData(snapshot.data);
+    }
+    if (snapshot?.selectedNoteIds) {
+      setSelectedNoteIds(new Set(snapshot.selectedNoteIds));
+    }
+    setProjectPickerState({ noteId: null, query: '' });
+    setLastUndo(null);
+  }, [lastUndo]);
+
   const toggleNoteSelection = (noteId) => {
     setSelectedNoteIds(prev => {
       const next = new Set(prev);
@@ -2600,6 +2675,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     if (!confirmBulkAction(`${description}? (${selectedNoteIds.size} item${selectedNoteIds.size === 1 ? '' : 's'})`)) {
       return;
     }
+    const snapshot = captureUndoSnapshot();
     setData(prev => ({
       ...prev,
       notes: prev.notes.map(note => {
@@ -2607,6 +2683,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
         return updater(note);
       })
     }));
+    registerUndo(description, snapshot);
     clearSelection();
   };
 
@@ -2706,7 +2783,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       return;
     }
     const ids = Array.from(selectedNoteIds);
-    ids.forEach(id => deleteNote(id));
+    deleteNotesByIds(ids, `Delete ${ids.length} item${ids.length === 1 ? '' : 's'}`);
     clearSelection();
   };
   const groupedNotes = getGroupedNotes(topLevelNotes);
@@ -2999,16 +3076,25 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
               >
                 <Play size={16} /> Start Session
               </button>
-              <button
-                onClick={() => {
-                  setEditingNote(null);
-                  setShowNoteModal(true);
-                }}
-                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
-              >
-                <Plus size={16} /> New Item
-              </button>
-            </div>
+            <button
+              onClick={() => {
+                setEditingNote(null);
+                setShowNoteModal(true);
+              }}
+              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
+            >
+              <Plus size={16} /> New Item
+            </button>
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={!lastUndo}
+              title={lastUndo ? `Undo ${lastUndo.label}` : 'Nothing to undo'}
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm border ${lastUndo ? 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
+            >
+              <RotateCcw size={16} /> Undo
+            </button>
+          </div>
             <div className="flex items-center gap-2 ml-auto">
               <button
                 onClick={() => setShowColumnMenu(true)}

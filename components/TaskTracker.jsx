@@ -1752,17 +1752,19 @@ Rules:
     const baseTopLevel = allNotes.filter(n => !n.parentId && visibleNotes.has(n.id));
     const topLevel = baseTopLevel.sort((a, b) => {
       if (!sortConfig.columnId) {
-        const aUrgent = a.isUrgent ? 1 : 0;
-        const bUrgent = b.isUrgent ? 1 : 0;
-        if (aUrgent !== bUrgent) {
-          return bUrgent - aUrgent; // urgent first
-        }
         const aDone = a.status === 'done' ? 1 : 0;
         const bDone = b.status === 'done' ? 1 : 0;
         if (aDone !== bDone) {
           return aDone - bDone; // done last
         }
-        return (b.createdAt || 0) - (a.createdAt || 0);
+        const aUrgent = a.isUrgent ? 1 : 0;
+        const bUrgent = b.isUrgent ? 1 : 0;
+        if (aUrgent !== bUrgent) {
+          return bUrgent - aUrgent; // urgent first, only if not done above
+        }
+        const aCreated = a.createdAt || 0;
+        const bCreated = b.createdAt || 0;
+        return bCreated - aCreated; // newest first by timestamp
       }
       const aValue = getSortValue(a, sortConfig.columnId);
       const bValue = getSortValue(b, sortConfig.columnId);

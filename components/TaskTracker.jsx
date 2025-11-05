@@ -175,6 +175,46 @@ export default function TaskTracker() {
   const columnResizeStateRef = useRef(null);
   const [projectPickerState, setProjectPickerState] = useState({ noteId: null, query: '' });
 
+  const projectsById = useMemo(() => {
+    const map = new Map();
+    data.projects.forEach(project => {
+      if (project?.id) {
+        map.set(project.id, project);
+      }
+    });
+    return map;
+  }, [data.projects]);
+
+  const projectsByNameLower = useMemo(() => {
+    const map = new Map();
+    data.projects.forEach(project => {
+      if (project?.name) {
+        map.set(project.name.toLowerCase(), project);
+      }
+    });
+    return map;
+  }, [data.projects]);
+
+  const sessionsById = useMemo(() => {
+    const map = new Map();
+    data.sessions.forEach(session => {
+      if (session?.id) {
+        map.set(session.id, session);
+      }
+    });
+    return map;
+  }, [data.sessions]);
+
+  const noteTypesById = useMemo(() => {
+    const map = new Map();
+    data.noteTypes.forEach(type => {
+      if (type?.id) {
+        map.set(type.id, type);
+      }
+    });
+    return map;
+  }, [data.noteTypes]);
+
   const ensureDefaultNoteTypes = (types = []) => {
     const baseList = Array.isArray(types) ? types.filter(t => t && t.id && t.id !== 'deliverable') : [];
     const existingIds = new Set(baseList.map(t => t.id));
@@ -190,6 +230,24 @@ export default function TaskTracker() {
   const sanitizeLoadedData = (raw) => {
     if (!raw || typeof raw !== 'object') return initialData;
     const sanitizedNoteTypes = ensureDefaultNoteTypes(raw.noteTypes);
+    const projectsMap = new Map();
+    const sanitizedProjects = Array.isArray(raw.projects)
+      ? raw.projects.filter(Boolean).map(project => {
+          const safe = { ...project };
+          if (!safe.id) safe.id = generateId();
+          projectsMap.set(safe.id, safe);
+          return safe;
+        })
+      : [];
+    const sessionsMap = new Map();
+    const sanitizedSessions = Array.isArray(raw.sessions)
+      ? raw.sessions.filter(Boolean).map(session => {
+          const safe = { ...session };
+          if (!safe.id) safe.id = generateId();
+          sessionsMap.set(safe.id, safe);
+          return safe;
+        })
+      : [];
     const sanitizedNotes = Array.isArray(raw.notes)
       ? raw.notes
           .filter(Boolean)
@@ -200,13 +258,16 @@ export default function TaskTracker() {
             }
             transformed.status = normalizeStatus(transformed.status);
             const projectIds = Array.isArray(transformed.projectIds)
-              ? transformed.projectIds.filter(Boolean)
+              ? transformed.projectIds.filter(id => id && projectsMap.has(id))
               : [];
             if (transformed.projectId) {
               projectIds.push(transformed.projectId);
             }
             transformed.projectIds = Array.from(new Set(projectIds));
             delete transformed.projectId;
+            if (transformed.sessionId && !sessionsMap.has(transformed.sessionId)) {
+              transformed.sessionId = null;
+            }
             return transformed;
           })
       : [];
@@ -220,6 +281,8 @@ export default function TaskTracker() {
     return {
       ...initialData,
       ...raw,
+      projects: sanitizedProjects,
+      sessions: sanitizedSessions,
       noteTypes: sanitizedNoteTypes,
       notes: sanitizedNotes,
       comments: sanitizedComments
@@ -715,13 +778,13 @@ Rules:
             ? [note.projectId]
             : [];
         const projectNames = projectIds
-          .map(id => data.projects.find(p => p.id === id)?.name || '')
+          .map(id => projectsById.get(id)?.name || '')
           .filter(Boolean)
           .sort();
         return projectNames[0] || '';
       }
       case 'session': {
-        const session = data.sessions.find(s => s.id === note.sessionId);
+        const session = sessionsById.get(note.sessionId);
         return session ? session.title : '';
       }
       case 'dueDate':
@@ -811,9 +874,7 @@ Rules:
         case 'p':
           if (value) {
             // Find project by name
-            const project = data.projects.find(p => 
-              p.name.toLowerCase() === value.toLowerCase()
-            );
+            const project = projectsByNameLower.get(value.toLowerCase());
             if (project) {
               if (!tags.projectIds.includes(project.id)) {
                 tags.projectIds.push(project.id);
@@ -868,7 +929,7 @@ Rules:
         case 'p': {
           if (value) {
             const valueLower = value.toLowerCase();
-            const matchedProjects = data.projects.filter(project =>
+            const matchedProjects = Array.from(projectsById.values()).filter(project =>
               (project.name || '').toLowerCase().includes(valueLower)
             );
             if (matchedProjects.length > 0) {
@@ -888,7 +949,7 @@ Rules:
         case 's': {
           if (value) {
             const valueLower = value.toLowerCase();
-            const matchedSessions = data.sessions.filter(session =>
+            const matchedSessions = Array.from(sessionsById.values()).filter(session =>
               (session.title || '').toLowerCase().includes(valueLower)
             );
             if (matchedSessions.length > 0) {
@@ -990,7 +1051,7 @@ Rules:
     }
 
     return criteria;
-  }, [searchQuery, data.projects, data.sessions, data.noteTypes]);
+  }, [searchQuery, projectsById, sessionsById]);
 
   // Handle project autocomplete
   const updateDueDatePreview = (text) => {
@@ -1703,12 +1764,12 @@ Rules:
         }
         if (searchCriteria.textTokens.length > 0) {
           const projectNames = projectIds
-            .map(id => data.projects.find(p => p.id === id)?.name || '')
+            .map(id => projectsById.get(id)?.name || '')
             .filter(Boolean);
           const sessionTitle = note.sessionId
-            ? data.sessions.find(s => s.id === note.sessionId)?.title || ''
+            ? sessionsById.get(note.sessionId)?.title || ''
             : '';
-          const typeName = data.noteTypes.find(t => t.id === note.type)?.name || toTitleCase(note.type || '');
+          const typeName = noteTypesById.get(note.type)?.name || toTitleCase(note.type || '');
           const statusLabel = STATUS_LABELS[note.status] || toTitleCase(note.status || '');
           const haystack = [
             note.content || '',
@@ -1797,7 +1858,7 @@ Rules:
           grouped['No Project'].push(note);
         } else {
           projectIds.forEach(id => {
-            const project = data.projects.find(p => p.id === id);
+            const project = projectsById.get(id);
             const key = project ? project.name : 'Unknown Project';
             if (!grouped[key]) grouped[key] = [];
             grouped[key].push(note);
@@ -1808,7 +1869,7 @@ Rules:
     } else if (groupBy === 'type') {
       const grouped = {};
       topLevelNotes.forEach(note => {
-        const type = data.noteTypes.find(t => t.id === note.type);
+        const type = noteTypesById.get(note.type);
         const key = type ? type.name : toTitleCase(note.type || 'Other');
         if (!grouped[key]) grouped[key] = [];
         grouped[key].push(note);
@@ -1817,7 +1878,7 @@ Rules:
     } else if (groupBy === 'session') {
       const grouped = {};
       topLevelNotes.forEach(note => {
-        const session = data.sessions.find(s => s.id === note.sessionId);
+        const session = sessionsById.get(note.sessionId);
         const key = session ? session.title : 'No Session';
         if (!grouped[key]) grouped[key] = [];
         grouped[key].push(note);
@@ -1867,17 +1928,40 @@ Rules:
     return [...data.projects].sort((a, b) => (timestamps.get(b.id) || 0) - (timestamps.get(a.id) || 0));
   }, [data.projects, data.notes]);
 
+  const notesByParent = useMemo(() => {
+    const map = new Map();
+    data.notes.forEach(note => {
+      if (!note) return;
+      const parentId = note.parentId || null;
+      if (!map.has(parentId)) {
+        map.set(parentId, []);
+      }
+      map.get(parentId).push(note);
+    });
+    map.forEach(list => list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)));
+    return map;
+  }, [data.notes]);
+
+  const commentsByNote = useMemo(() => {
+    const map = new Map();
+    data.comments.forEach(comment => {
+      if (!comment) return;
+      if (!map.has(comment.noteId)) {
+        map.set(comment.noteId, []);
+      }
+      map.get(comment.noteId).push(comment);
+    });
+    map.forEach(list => list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)));
+    return map;
+  }, [data.comments]);
+
   const buildNoteRows = (note, depth = 0, visibleNotesSet, matchingNotesSet) => {
-    const childCandidates = data.notes
-      .filter(n => n.parentId === note.id)
-      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const childCandidates = notesByParent.get(note.id) || [];
     const includeAllChildren = matchingNotesSet.has(note.id);
     const children = includeAllChildren
       ? childCandidates
       : childCandidates.filter(child => visibleNotesSet.has(child.id));
-    const comments = data.comments
-      .filter(c => c.noteId === note.id)
-      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const comments = commentsByNote.get(note.id) || [];
     const isCollapsed = collapsedNotes.has(note.id);
     const commentsExpanded = showComments.has(note.id);
     
@@ -1953,16 +2037,16 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             : [])
       : [];
     const projectEntities = noteProjectIds
-      .map(id => data.projects.find(p => p.id === id))
+      .map(id => projectsById.get(id))
       .filter(Boolean);
     const noteSession = isNoteRow
-      ? data.sessions.find(s => s.id === note.sessionId)
+      ? sessionsById.get(note.sessionId)
       : null;
     const commentSession = !isNoteRow && comment.sessionId
-      ? data.sessions.find(s => s.id === comment.sessionId)
+      ? sessionsById.get(comment.sessionId)
       : null;
     const typeDefinition = isNoteRow
-      ? data.noteTypes.find(t => t.id === note.type)
+      ? noteTypesById.get(note.type)
       : null;
     const typeLabel = isNoteRow
       ? (typeDefinition ? typeDefinition.name : toTitleCase(note.type || 'Note'))
@@ -2146,8 +2230,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             const recentAvailableProjects = recentProjects
               .filter(project => !noteProjectIds.includes(project.id))
               .slice(0, 5);
-            const canCreateProject = normalizedPickerQuery.length > 0 &&
-              !data.projects.some(project => (project.name || '').toLowerCase() === normalizedPickerQuery);
+            const canCreateProject = normalizedPickerQuery.length > 0 && !projectsByNameLower.has(normalizedPickerQuery);
 
             const handleProjectPickerSubmit = () => {
               const trimmed = pickerQuery.trim();
@@ -2539,7 +2622,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
 
   const handleBulkTypeChange = (value) => {
     if (!value) return;
-    const typeName = data.noteTypes.find(t => t.id === value)?.name || value;
+    const typeName = noteTypesById.get(value)?.name || value;
     applyBulkUpdate(`Set type to ${typeName}`, (note) => ({
       ...note,
       type: value,
@@ -2549,7 +2632,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
 
   const handleBulkProjectAdd = (value) => {
     if (!value) return;
-    const project = data.projects.find(p => p.id === value);
+    const project = projectsById.get(value);
     const projectName = project ? project.name : 'selected project';
     applyBulkUpdate(`Add project ${projectName}`, (note) => {
       const ids = Array.isArray(note.projectIds)
@@ -2578,7 +2661,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       }));
       return;
     }
-    const project = data.projects.find(p => p.id === value);
+    const project = projectsById.get(value);
     const projectName = project ? project.name : 'selected project';
     applyBulkUpdate(`Remove project ${projectName}`, (note) => {
       const ids = Array.isArray(note.projectIds)
@@ -2599,7 +2682,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     const sessionId = value === '__NONE__' ? null : value;
     const sessionLabel = value === '__NONE__'
       ? 'no session'
-      : data.sessions.find(s => s.id === value)?.title || 'selected session';
+      : sessionsById.get(value)?.title || 'selected session';
     applyBulkUpdate(`Set session to ${sessionLabel}`, (note) => ({
       ...note,
       sessionId,
@@ -2881,7 +2964,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                   
                   {/* Project Tag */}
                   {appliedTags.projectIds && appliedTags.projectIds.map(projectId => {
-                    const project = data.projects.find(p => p.id === projectId);
+                    const project = projectsById.get(projectId);
                     if (!project) return null;
                     return (
                       <div key={projectId} className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">

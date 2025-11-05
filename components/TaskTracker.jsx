@@ -128,6 +128,10 @@ const initialData = {
   }
 };
 
+const AUTOSAVE_STORAGE_KEY = 'taskTrackerAutosaves';
+const AUTOSAVE_INTERVAL_MS = 15 * 60 * 1000;
+const AUTOSAVE_MAX_COUNT = 10;
+
 export default function TaskTracker() {
   const [data, setData] = useState(initialData);
   const [quickEntry, setQuickEntry] = useState('');
@@ -179,6 +183,14 @@ export default function TaskTracker() {
   const columnResizeStateRef = useRef(null);
   const [projectPickerState, setProjectPickerState] = useState({ noteId: null, query: '' });
   const [lastUndo, setLastUndo] = useState(null);
+  const [autosaves, setAutosaves] = useState([]);
+  const [autosaveReady, setAutosaveReady] = useState(false);
+  const [showAutosaveMenu, setShowAutosaveMenu] = useState(false);
+  const autosaveMenuRef = useRef(null);
+  const autosaveButtonRef = useRef(null);
+  const autosaveTimerRef = useRef(null);
+  const dataRef = useRef(data);
+  const selectedIdsRef = useRef(selectedNoteIds);
 
   const projectsById = useMemo(() => {
     const map = new Map();
@@ -319,6 +331,7 @@ export default function TaskTracker() {
       } else {
         lastSavedSnapshotRef.current = null;
       }
+      setAutosaveReady(true);
     };
 
     const loadFromLocalStorage = () => {
@@ -353,6 +366,7 @@ export default function TaskTracker() {
         if (!loaded && !cancelled) {
           hasInitializedRef.current = true;
           lastSavedSnapshotRef.current = null;
+          setAutosaveReady(true);
         }
       }
     };
@@ -368,6 +382,29 @@ export default function TaskTracker() {
     if (!hasInitializedRef.current || typeof window === 'undefined') return;
     window.localStorage.setItem('taskTrackerData', JSON.stringify(data));
   }, [data]);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  useEffect(() => {
+    selectedIdsRef.current = selectedNoteIds;
+  }, [selectedNoteIds]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = window.localStorage.getItem(AUTOSAVE_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            setAutosaves(parsed.slice(0, AUTOSAVE_MAX_COUNT));
+          }
+        }
+    } catch (error) {
+      console.error('Failed to load autosaves', error);
+    }
+  }, []);
 
   useEffect(() => {
     if (!hasInitializedRef.current) return;
@@ -1634,6 +1671,22 @@ Rules:
     setLastUndo({ label, snapshot });
   }, []);
 
+  const applySnapshot = useCallback((snapshotData, selectedIds = []) => {
+    setData(snapshotData);
+    const active = snapshotData.sessions?.find?.(session => session && session.isActive);
+    if (active) {
+      setActiveSession(active);
+      setSelectedProject(active.projectId || null);
+    } else {
+      setActiveSession(null);
+      setSelectedProject(null);
+    }
+    setSelectedNoteIds(new Set(selectedIds));
+    setProjectPickerState({ noteId: null, query: '' });
+    setCollapsedNotes(new Set());
+    setShowComments(new Set());
+  }, []);
+
   const deleteNotesByIds = (noteIds, description = 'Delete items') => {
     const ids = Array.isArray(noteIds) ? noteIds.filter(Boolean) : [];
     if (ids.length === 0) return;
@@ -2562,15 +2615,22 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
   }, [groupBy]);
 
   useEffect(() => {
-    if (!projectPickerState.noteId) return;
+    if (!projectPickerState.noteId && !showAutosaveMenu) return;
     const handleClickOutside = (event) => {
-      if (projectPickerRef.current && projectPickerRef.current.contains(event.target)) return;
-      if (event.target.closest('[data-project-picker-trigger="true"]')) return;
-      setProjectPickerState({ noteId: null, query: '' });
+      if (projectPickerState.noteId) {
+        if (projectPickerRef.current && projectPickerRef.current.contains(event.target)) return;
+        if (event.target.closest('[data-project-picker-trigger=\"true\"]')) return;
+        setProjectPickerState({ noteId: null, query: '' });
+      }
+      if (showAutosaveMenu) {
+        if (autosaveMenuRef.current && autosaveMenuRef.current.contains(event.target)) return;
+        if (autosaveButtonRef.current && autosaveButtonRef.current.contains(event.target)) return;
+        setShowAutosaveMenu(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [projectPickerState.noteId]);
+  }, [projectPickerState.noteId, showAutosaveMenu]);
 
   useEffect(() => {
     if (projectPickerState.noteId && projectPickerInputRef.current) {
@@ -2578,18 +2638,53 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     }
   }, [projectPickerState.noteId]);
 
+  useEffect(() => {
+    if (!autosaveReady || typeof window === 'undefined') return;
+
+    const saveAutosave = () => {
+      const snapshot = {
+        id: generateId(),
+        timestamp: Date.now(),
+        data: cloneDeep(dataRef.current),
+        selectedNoteIds: Array.from(selectedIdsRef.current)
+      };
+      setAutosaves(prev => {
+        const next = [snapshot, ...prev].slice(0, AUTOSAVE_MAX_COUNT);
+        try {
+          window.localStorage.setItem(AUTOSAVE_STORAGE_KEY, JSON.stringify(next));
+        } catch (error) {
+          console.error('Failed to persist autosave', error);
+        }
+        return next;
+      });
+    };
+
+    saveAutosave();
+    autosaveTimerRef.current = window.setInterval(saveAutosave, AUTOSAVE_INTERVAL_MS);
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearInterval(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [autosaveReady]);
+
   const handleUndo = useCallback(() => {
     if (!lastUndo) return;
     const { snapshot } = lastUndo;
     if (snapshot?.data) {
-      setData(snapshot.data);
+      applySnapshot(snapshot.data, snapshot.selectedNoteIds || []);
     }
-    if (snapshot?.selectedNoteIds) {
-      setSelectedNoteIds(new Set(snapshot.selectedNoteIds));
-    }
-    setProjectPickerState({ noteId: null, query: '' });
     setLastUndo(null);
-  }, [lastUndo]);
+  }, [lastUndo, applySnapshot]);
+
+  const restoreAutosave = useCallback((entry) => {
+    if (!entry) return;
+    const snapshot = captureUndoSnapshot();
+    applySnapshot(cloneDeep(entry.data), entry.selectedNoteIds || []);
+    registerUndo('Restore autosave', snapshot);
+    setShowAutosaveMenu(false);
+  }, [applySnapshot, captureUndoSnapshot, registerUndo]);
 
   const toggleNoteSelection = (noteId) => {
     setSelectedNoteIds(prev => {
@@ -3057,7 +3152,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           
           {/* Action Bar */}
           <div className="flex flex-wrap items-center gap-2 mt-4">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
               <button
                 onClick={() => setShowProjectModal(true)}
                 className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
@@ -3070,25 +3165,60 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
               >
                 <Play size={16} /> Start Session
               </button>
-            <button
-              onClick={() => {
-                setEditingNote(null);
-                setShowNoteModal(true);
-              }}
-              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
-            >
-              <Plus size={16} /> New Item
-            </button>
-            <button
-              type="button"
-              onClick={handleUndo}
-              disabled={!lastUndo}
-              title={lastUndo ? `Undo ${lastUndo.label}` : 'Nothing to undo'}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm border ${lastUndo ? 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
-            >
-              <RotateCcw size={16} /> Undo
-            </button>
-          </div>
+              <button
+                onClick={() => {
+                  setEditingNote(null);
+                  setShowNoteModal(true);
+                }}
+                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm"
+              >
+                <Plus size={16} /> New Item
+              </button>
+              <button
+                type="button"
+                onClick={handleUndo}
+                disabled={!lastUndo}
+                title={lastUndo ? `Undo ${lastUndo.label}` : 'Nothing to undo'}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm border ${lastUndo ? 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
+              >
+                <RotateCcw size={16} /> Undo
+              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  ref={autosaveButtonRef}
+                  onClick={() => setShowAutosaveMenu(prev => !prev)}
+                  disabled={autosaves.length === 0}
+                  className={`px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm border ${autosaves.length > 0 ? 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'}`}
+                >
+                  Autosaves
+                </button>
+                {showAutosaveMenu && autosaves.length > 0 && (
+                  <div
+                    ref={autosaveMenuRef}
+                    className="absolute right-0 z-40 mt-2 w-72 rounded-lg border border-gray-200 bg-white shadow-lg"
+                  >
+                    <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
+                      {autosaves.map(entry => (
+                        <button
+                          key={entry.id}
+                          type="button"
+                          className="w-full px-4 py-3 text-left text-sm hover:bg-gray-50"
+                          onClick={() => restoreAutosave(entry)}
+                        >
+                          <div className="font-medium text-gray-700">
+                            {new Date(entry.timestamp).toLocaleString()}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {entry.selectedNoteIds?.length || 0} selected
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="flex items-center gap-2 ml-auto">
               <button
                 onClick={() => setShowColumnMenu(true)}

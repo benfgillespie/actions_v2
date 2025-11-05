@@ -2085,8 +2085,8 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       ? formatDateShort(note.dueDate)
       : '—';
     const urgentClasses = note.isUrgent
-      ? 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'
-      : 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500';
+      ? 'inline-flex items-start gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'
+      : 'inline-flex items-start gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500';
     
     return (
       <div
@@ -2108,12 +2108,12 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                   <button
                     type="button"
                     onClick={() => cycleNoteType(note)}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
+                    className="inline-flex items-start gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
                   >
                     {typeLabel}
                   </button>
                 ) : (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                <span className="inline-flex items-start gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
                     {typeValue}
                   </span>
                 )}
@@ -2181,26 +2181,22 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                 className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
               >
                 <div className="flex flex-wrap items-start gap-2">
-                  {projectEntities.length === 0 ? (
-                    <span className="text-gray-400 pt-0.5">—</span>
-                  ) : (
-                    projectEntities.map(project => (
-                      <span
-                        key={project.id}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700"
-                      >
-                        <Folder size={12} /> {project.name}
-                        <button
-                          type="button"
-                          onClick={() => removeProjectFromNote(note.id, project.id)}
-                          className="hover:bg-green-200 rounded-full p-0.5"
-                          aria-label={`Remove ${project.name}`}
-                        >
-                          <X size={12} />
-                        </button>
-                      </span>
-                    ))
-                  )}
+                  {projectEntities.map(project => (
+                    <span
+                      key={project.id}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700"
+                    >
+                      <Folder size={12} /> {project.name}
+                  <button
+                    type="button"
+                    onClick={() => removeProjectFromNote(note.id, project.id)}
+                    className="hover:bg-green-200 rounded-full p-0.5 items-start"
+                    aria-label={`Remove ${project.name}`}
+                  >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
                   <button
                     type="button"
                     data-project-picker-trigger="true"
@@ -2211,10 +2207,10 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                         openProjectPicker(note.id);
                       }
                     }}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-green-500 text-white hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-300"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-green-100 text-green-700 hover:bg-green-200 focus:outline-none focus:ring-2 focus:ring-green-200"
                     aria-label="Add project"
                   >
-                    <Plus size={14} />
+                    <Plus size={12} />
                   </button>
                 </div>
                 {isProjectPickerOpen && (
@@ -2891,7 +2887,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                         <span className="font-medium">{project.name}</span>
                         <button
                           onClick={() => removeTag('project', projectId)}
-                          className="hover:bg-green-200 rounded-full p-0.5"
+                        className="hover:bg-green-200 rounded-full p-0.5"
                         >
                           <X size={12} />
                         </button>
@@ -3156,7 +3152,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                           return (
                             <div
                               key={`header-${column.id}`}
-                              className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${!isLast ? 'border-r border-gray-200' : ''} ${column.id === 'actions' ? 'pr-6' : ''}`}
+                            className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${!isLast ? 'border-r border-gray-200' : ''} ${column.id === 'actions' ? 'pr-11' : ''}`}
                               onDragOver={(event) => handleColumnDragOver(event, column.id)}
                               onDrop={(event) => handleColumnDrop(event, column.id)}
                             >

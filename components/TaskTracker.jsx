@@ -86,7 +86,7 @@ const COLUMN_MIN_WIDTHS = {
   urgent: 110,
   status: 130,
   createdAt: 130,
-  actions: 72
+  actions: 96
 };
 
 const COLUMN_DEFAULT_WIDTHS = {
@@ -97,7 +97,7 @@ const COLUMN_DEFAULT_WIDTHS = {
   urgent: 120,
   status: 150,
   createdAt: 140,
-  actions: 90
+  actions: 120
 };
 
 const SELECTION_COLUMN_WIDTH = 40;
@@ -2085,8 +2085,8 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
       ? formatDateShort(note.dueDate)
       : '—';
     const urgentClasses = note.isUrgent
-      ? 'inline-flex items-start gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'
-      : 'inline-flex items-start gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500';
+      ? 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'
+      : 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500';
     
     return (
       <div
@@ -2102,18 +2102,18 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             return (
               <div
                 key={`${rowKey}-type`}
-                className={`relative px-4 py-3 text-sm text-gray-700 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+                className={`relative flex items-start px-4 py-3 text-sm text-gray-700 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
               >
                 {isNoteRow ? (
                   <button
                     type="button"
                     onClick={() => cycleNoteType(note)}
-                    className="inline-flex items-start gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
                   >
                     {typeLabel}
                   </button>
                 ) : (
-                <span className="inline-flex items-start gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
                     {typeValue}
                   </span>
                 )}
@@ -2187,12 +2187,12 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700"
                     >
                       <Folder size={12} /> {project.name}
-                  <button
-                    type="button"
-                    onClick={() => removeProjectFromNote(note.id, project.id)}
-                    className="hover:bg-green-200 rounded-full p-0.5 items-start"
-                    aria-label={`Remove ${project.name}`}
-                  >
+                      <button
+                        type="button"
+                        onClick={() => removeProjectFromNote(note.id, project.id)}
+                        className="hover:bg-green-200 rounded-full p-0.5"
+                        aria-label={`Remove ${project.name}`}
+                      >
                         <X size={12} />
                       </button>
                     </span>
@@ -2313,7 +2313,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             return (
               <div
                 key={`${rowKey}-urgent`}
-                className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+                className={`relative flex items-start px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
               >
                 {isNoteRow ? (
                   <button
@@ -2334,7 +2334,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             return (
               <div
                 key={`${rowKey}-status`}
-                className={`relative px-4 py-3 flex items-center ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+                className={`relative flex items-start px-4 py-3 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
               >
                 {isNoteRow ? (
                   <button
@@ -2366,7 +2366,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             return (
               <div
                 key={`${rowKey}-actions`}
-                className={`relative px-4 py-3 flex items-center justify-end gap-2 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+                className={`relative px-4 py-3 pr-6 flex items-start justify-end gap-2 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
               >
                 {isNoteRow ? (
                   <>
@@ -3152,7 +3152,7 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                           return (
                             <div
                               key={`header-${column.id}`}
-                            className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${!isLast ? 'border-r border-gray-200' : ''} ${column.id === 'actions' ? 'pr-11' : ''}`}
+                              className={`relative flex flex-col gap-3 px-4 py-3 bg-gray-100 ${!isLast ? 'border-r border-gray-200' : ''} ${column.id === 'actions' ? 'pr-12' : ''}`}
                               onDragOver={(event) => handleColumnDragOver(event, column.id)}
                               onDrop={(event) => handleColumnDrop(event, column.id)}
                             >

@@ -186,6 +186,7 @@ export default function TaskTracker() {
   const [autosaves, setAutosaves] = useState([]);
   const [autosaveReady, setAutosaveReady] = useState(false);
   const [showAutosaveMenu, setShowAutosaveMenu] = useState(false);
+  const [sessionDetailsTarget, setSessionDetailsTarget] = useState(null);
   const autosaveMenuRef = useRef(null);
   const autosaveButtonRef = useRef(null);
   const autosaveTimerRef = useRef(null);
@@ -390,6 +391,14 @@ export default function TaskTracker() {
   useEffect(() => {
     selectedIdsRef.current = selectedNoteIds;
   }, [selectedNoteIds]);
+
+  useEffect(() => {
+    if (!sessionDetailsTarget) return;
+    const exists = data.notes.some(note => note.id === sessionDetailsTarget.noteId);
+    if (!exists) {
+      setSessionDetailsTarget(null);
+    }
+  }, [sessionDetailsTarget, data.notes]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1421,12 +1430,15 @@ Rules:
         ...prev,
         notes: prev.notes.map(n => {
           if (n.id !== editingNote.id) return n;
+          const nextSessionId = noteData.sessionId !== undefined
+            ? (noteData.sessionId || null)
+            : (activeSession?.id || n.sessionId || null);
           return {
             ...n,
             ...noteData,
             projectIds: sanitizedProjectIds,
             status: baseStatus,
-            sessionId: activeSession?.id || n.sessionId || null,
+            sessionId: nextSessionId,
             updatedAt: Date.now()
           };
         })
@@ -1443,7 +1455,9 @@ Rules:
             : selectedProject
               ? [selectedProject]
               : [],
-        sessionId: activeSession?.id || null,
+        sessionId: noteData.sessionId !== undefined
+          ? (noteData.sessionId || null)
+          : (activeSession?.id || null),
         status: baseStatus,
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -1513,6 +1527,76 @@ Rules:
       })
     }));
   };
+
+  const promptEditNoteContent = useCallback((note) => {
+    if (!note || typeof window === 'undefined') return;
+    const activeSelection = window.getSelection();
+    if (activeSelection && activeSelection.toString()) return;
+    const currentContent = note.content || '';
+    const updatedContent = window.prompt('Update item text', currentContent);
+    if (updatedContent === null || updatedContent === currentContent) return;
+    const trimmedContent = updatedContent.trim();
+    if (!trimmedContent) return;
+    const snapshot = captureUndoSnapshot();
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(n => n.id === note.id
+        ? { ...n, content: trimmedContent, updatedAt: Date.now() }
+        : n)
+    }));
+    registerUndo('Update item text', snapshot);
+  }, [captureUndoSnapshot, registerUndo]);
+
+  const promptEditCommentContent = useCallback((comment) => {
+    if (!comment || typeof window === 'undefined') return;
+    const activeSelection = window.getSelection();
+    if (activeSelection && activeSelection.toString()) return;
+    const currentContent = comment.content || '';
+    const updatedContent = window.prompt('Update comment text', currentContent);
+    if (updatedContent === null || updatedContent === currentContent) return;
+    const trimmedContent = updatedContent.trim();
+    if (!trimmedContent) return;
+    const snapshot = captureUndoSnapshot();
+    setData(prev => ({
+      ...prev,
+      comments: prev.comments.map(existing =>
+        existing.id === comment.id
+          ? { ...existing, content: trimmedContent, updatedAt: Date.now() }
+          : existing
+      )
+    }));
+    registerUndo('Update comment text', snapshot);
+  }, [captureUndoSnapshot, registerUndo]);
+
+  const promptEditNoteDueDate = useCallback((note) => {
+    if (!note || typeof window === 'undefined') return;
+    const currentValue = note.dueDate
+      ? new Date(note.dueDate).toISOString().slice(0, 10)
+      : '';
+    const nextValue = window.prompt('Set due date (YYYY-MM-DD)', currentValue);
+    if (nextValue === null) return;
+    const trimmed = nextValue.trim();
+    let nextTimestamp = null;
+    if (trimmed) {
+      const parsed = Date.parse(trimmed);
+      if (Number.isNaN(parsed)) {
+        window.alert('Please enter a valid date in the format YYYY-MM-DD.');
+        return;
+      }
+      const parsedDate = new Date(parsed);
+      parsedDate.setHours(0, 0, 0, 0);
+      nextTimestamp = parsedDate.getTime();
+    }
+    if ((note.dueDate || null) === (nextTimestamp || null)) return;
+    const snapshot = captureUndoSnapshot();
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(n => n.id === note.id
+        ? { ...n, dueDate: nextTimestamp, updatedAt: Date.now() }
+        : n)
+    }));
+    registerUndo('Update due date', snapshot);
+  }, [captureUndoSnapshot, registerUndo]);
 
   const addProjectToNote = (noteId, projectId) => {
     if (!projectId) return;
@@ -1715,6 +1799,32 @@ Rules:
     deleteNotesByIds([noteId], 'Delete note');
   };
 
+  const updateNoteSession = useCallback((noteId, nextSessionId) => {
+    if (!noteId) return;
+    const currentData = dataRef.current;
+    if (!currentData || !Array.isArray(currentData.notes)) {
+      return;
+    }
+    const targetNote = currentData.notes.find(note => note.id === noteId);
+    const normalizedSessionId = nextSessionId || null;
+    if (!targetNote || (targetNote.sessionId || null) === normalizedSessionId) {
+      return;
+    }
+    const snapshot = captureUndoSnapshot();
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(note =>
+        note.id === noteId
+          ? { ...note, sessionId: normalizedSessionId, updatedAt: Date.now() }
+          : note
+      )
+    }));
+    const sessionLabel = normalizedSessionId
+      ? sessionsById.get(normalizedSessionId)?.title || 'selected session'
+      : 'no session';
+    registerUndo(`Set session to ${sessionLabel}`, snapshot);
+  }, [captureUndoSnapshot, registerUndo, sessionsById]);
+
   const handleDeleteFromModal = (noteId) => {
     if (!noteId) return;
     const confirmed = typeof window === 'undefined' ? true : window.confirm('Delete this note and its sub-items?');
@@ -1723,6 +1833,11 @@ Rules:
     setShowNoteModal(false);
     setEditingNote(null);
   };
+
+  const handleSessionBubbleClick = useCallback((note) => {
+    if (!note) return;
+    setSessionDetailsTarget({ noteId: note.id });
+  }, []);
 
   // Add comment
   const addThreadItem = (noteId, entry) => {
@@ -1757,7 +1872,7 @@ Rules:
           : parent.projectId
             ? [parent.projectId]
             : [],
-        sessionId: activeSession?.id || parent.sessionId || null,
+        sessionId: activeSession?.id || null,
         type: type || 'note',
         content,
         dueDate,
@@ -2191,7 +2306,11 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
             </div>
             <div className="flex-1">
               <div className="flex items-start justify-between gap-3">
-                <p className="text-sm font-medium text-gray-900 whitespace-pre-wrap flex-1">
+                <p
+                  className="text-sm font-medium text-gray-900 whitespace-pre-wrap flex-1 cursor-pointer hover:text-blue-600"
+                  onClick={() => promptEditNoteContent(note)}
+                  title="Click to edit text"
+                >
                   {note.content}
                 </p>
                 <div className="flex items-center gap-3">
@@ -2235,7 +2354,13 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                   </span>
                 )}
               </div>
-              <p className="mt-1 leading-relaxed text-sm text-gray-700">{comment.content}</p>
+              <p
+                className="mt-1 leading-relaxed text-sm text-gray-700 cursor-pointer hover:text-blue-600"
+                onClick={() => promptEditCommentContent(comment)}
+                title="Click to edit comment"
+              >
+                {comment.content}
+              </p>
               <div className="mt-1 text-xs text-gray-400">{formatDate(comment.createdAt)}</div>
             </div>
           </div>
@@ -2274,7 +2399,9 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
     );
 
     const sessionLabel = isNoteRow
-      ? noteSession?.title || '—'
+      ? note.sessionId
+        ? noteSession?.title || 'Unknown Session'
+        : 'No Session'
       : commentSession?.title || '—';
     const dueDateValue = isNoteRow && note.dueDate
       ? formatDateShort(note.dueDate)
@@ -2482,12 +2609,41 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           }
           
           if (column.id === 'session') {
+            if (!isNoteRow) {
+              return (
+                <div
+                  key={`${rowKey}-session`}
+                  className={`relative px-4 py-3 text-sm text-gray-600 truncate ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+                >
+                  {sessionLabel}
+                </div>
+              );
+            }
+            const hasSession = !!note.sessionId;
+            const bubbleBaseClasses = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-300';
+            const bubbleClasses = hasSession
+              ? `${bubbleBaseClasses} bg-blue-100 text-blue-700 hover:bg-blue-200`
+              : `${bubbleBaseClasses} bg-gray-100 text-gray-500 hover:bg-gray-200`;
             return (
               <div
                 key={`${rowKey}-session`}
-                className={`relative px-4 py-3 text-sm text-gray-600 truncate ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
+                className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
               >
-                {sessionLabel}
+                <button
+                  type="button"
+                  onClick={() => handleSessionBubbleClick(note)}
+                  className={bubbleClasses}
+                >
+                  {hasSession ? (
+                    <>
+                      <Clock size={12} /> {sessionLabel}
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={12} /> Set Session
+                    </>
+                  )}
+                </button>
               </div>
             );
           }
@@ -2498,7 +2654,21 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
                 key={`${rowKey}-due`}
                 className={`relative px-4 py-3 text-sm text-gray-600 ${!isLastVisibleColumn ? 'border-r border-gray-200' : ''}`}
               >
-                {dueDateValue}
+                {isNoteRow ? (
+                  <button
+                    type="button"
+                    onClick={() => promptEditNoteDueDate(note)}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition ${
+                      note.dueDate ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                    title="Click to edit due date"
+                  >
+                    <Calendar size={12} />
+                    {note.dueDate ? dueDateValue : 'Set Due Date'}
+                  </button>
+                ) : (
+                  dueDateValue
+                )}
               </div>
             );
           }
@@ -2603,6 +2773,16 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
   const selectedCount = selectedNoteIds.size;
   const allVisibleSelected = visibleNoteIds.length > 0 && selectedVisibleCount === visibleNoteIds.length;
   const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
+
+  const sessionDetailsNote = useMemo(() => {
+    if (!sessionDetailsTarget) return null;
+    return data.notes.find(note => note.id === sessionDetailsTarget.noteId) || null;
+  }, [data.notes, sessionDetailsTarget]);
+
+  const sessionDetailsSession = useMemo(() => {
+    if (!sessionDetailsNote || !sessionDetailsNote.sessionId) return null;
+    return sessionsById.get(sessionDetailsNote.sessionId) || null;
+  }, [sessionDetailsNote, sessionsById]);
 
   useEffect(() => {
     if (selectAllRef.current) {
@@ -3593,12 +3773,26 @@ const renderRow = (row, gridTemplateColumns, visibleColumnsList) => {
           }}
         />
       )}
+
+      {sessionDetailsTarget && sessionDetailsNote && (
+        <SessionDetailsModal
+          note={sessionDetailsNote}
+          session={sessionDetailsSession}
+          sessions={data.sessions}
+          projects={data.projects}
+          people={data.people}
+          onClose={() => setSessionDetailsTarget(null)}
+          onChangeSession={(nextSessionId) => updateNoteSession(sessionDetailsNote.id, nextSessionId)}
+        />
+      )}
       
       {showNoteModal && (
         <NoteModal
           note={editingNote}
           projects={data.projects}
           noteTypes={data.noteTypes}
+          sessions={data.sessions}
+          defaultSessionId={activeSession?.id || null}
           selectedProject={selectedProject}
           onClose={() => {
             setShowNoteModal(false);
@@ -4166,7 +4360,7 @@ function SessionModal({ projects, people, onClose, onSave, onAddPerson }) {
 }
 
 // Note Modal
-function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave, onDelete }) {
+function NoteModal({ note, projects, noteTypes, sessions, defaultSessionId, selectedProject, onClose, onSave, onDelete }) {
   const availableNoteTypes = noteTypes.filter(t => t.id !== 'deliverable');
   const fallbackType = note?.type && availableNoteTypes.some(t => t.id === note.type)
     ? note.type
@@ -4184,6 +4378,29 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
   const [dueDate, setDueDate] = useState(note?.dueDate ? new Date(note.dueDate).toISOString().slice(0, 16) : '');
   const [status, setStatus] = useState(normalizeStatus(note?.status));
   const [isUrgent, setIsUrgent] = useState(note?.isUrgent || false);
+  const [sessionId, setSessionId] = useState(() => {
+    if (note?.sessionId) return note.sessionId;
+    if (note && !note.sessionId) return '';
+    if (!note && defaultSessionId) return defaultSessionId;
+    return '';
+  });
+  const sessionOptions = Array.isArray(sessions) ? sessions : [];
+  const selectedSession = sessionId ? sessionOptions.find(session => session.id === sessionId) || null : null;
+  const sessionProjectName = selectedSession?.projectId
+    ? projects.find(project => project.id === selectedSession.projectId)?.name || 'Unknown Project'
+    : null;
+
+  useEffect(() => {
+    if (note?.sessionId) {
+      setSessionId(note.sessionId);
+    } else if (note) {
+      setSessionId('');
+    } else if (defaultSessionId) {
+      setSessionId(defaultSessionId);
+    } else {
+      setSessionId('');
+    }
+  }, [note?.id, note?.sessionId, defaultSessionId]);
   
   /* AI Analysis - Commented out for now
   const handleAnalyze = async () => {
@@ -4212,6 +4429,7 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
         content,
         type,
         projectIds,
+        sessionId: sessionId ? sessionId : null,
         dueDate: dueDate ? new Date(dueDate).getTime() : null,
         status: normalizeStatus(status),
         isUrgent
@@ -4254,6 +4472,43 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Session</label>
+            <select
+              value={sessionId}
+              onChange={(e) => setSessionId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">No Session</option>
+              {sessionOptions.map(session => (
+                <option key={session.id} value={session.id}>
+                  {session.title || 'Untitled Session'}
+                </option>
+              ))}
+            </select>
+            <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+              {selectedSession ? (
+                <div className="space-y-1 text-xs text-gray-600">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-gray-700">{selectedSession.title || 'Untitled Session'}</span>
+                    {selectedSession.isActive && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p><span className="font-medium text-gray-700">Type:</span> {toTitleCase(selectedSession.type || 'Session')}</p>
+                  {sessionProjectName && (
+                    <p><span className="font-medium text-gray-700">Project:</span> {sessionProjectName}</p>
+                  )}
+                  <p><span className="font-medium text-gray-700">Start:</span> {selectedSession.startTime ? formatDate(selectedSession.startTime) : 'Not recorded'}</p>
+                  <p><span className="font-medium text-gray-700">End:</span> {selectedSession.endTime ? formatDate(selectedSession.endTime) : 'In progress'}</p>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">No session selected for this item.</p>
+              )}
+            </div>
           </div>
           {!note?.parentId && (
             <div>
@@ -4340,6 +4595,154 @@ function NoteModal({ note, projects, noteTypes, selectedProject, onClose, onSave
               </button>
               <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
                 {note?.id ? 'Save' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function SessionDetailsModal({ note, session, sessions, projects, people, onClose, onChangeSession }) {
+  if (!note) return null;
+  const [selectedSessionId, setSelectedSessionId] = useState(() => session?.id || '');
+  const sessionOptions = Array.isArray(sessions) ? sessions : [];
+  const projectList = Array.isArray(projects) ? projects : [];
+
+  useEffect(() => {
+    if (session?.id) {
+      setSelectedSessionId(session.id);
+    } else {
+      setSelectedSessionId('');
+    }
+  }, [session?.id, note?.id]);
+
+  const peopleById = useMemo(() => {
+    const map = new Map();
+    if (Array.isArray(people)) {
+      people.forEach(person => {
+        if (person?.id) {
+          map.set(person.id, person.name || 'Unnamed Person');
+        }
+      });
+    }
+    return map;
+  }, [people]);
+
+  const selectedSession = selectedSessionId
+    ? sessionOptions.find(item => item.id === selectedSessionId) || null
+    : null;
+
+  const displaySession = selectedSession || session;
+
+  const sessionProjectName = displaySession?.projectId
+    ? projectList.find(project => project.id === displaySession.projectId)?.name || 'Unknown Project'
+    : null;
+
+  const participantNames = Array.isArray(displaySession?.participants)
+    ? displaySession.participants
+        .map(participantId => peopleById.get(participantId) || participantId)
+        .filter(Boolean)
+    : [];
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    onChangeSession(selectedSessionId || null);
+    onClose();
+  };
+
+  const handleRemove = () => {
+    setSelectedSessionId('');
+    onChangeSession(null);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+      <div className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl">
+        <div className="mb-4 flex items-start justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-800">Session Details</h2>
+            <p className="mt-1 text-sm text-gray-500">Adjust the session attached to this item.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+            aria-label="Close session details"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Item</p>
+          <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{note.content || 'Untitled item'}</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assigned Session</label>
+            <select
+              value={selectedSessionId}
+              onChange={(event) => setSelectedSessionId(event.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">No Session</option>
+              {sessionOptions.map(option => {
+                const labelDate = option.startTime ? formatDateShort(option.startTime) : null;
+                const label = option.title || 'Untitled Session';
+                return (
+                  <option key={option.id} value={option.id}>
+                    {labelDate ? `${label} — ${labelDate}` : label}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+            {displaySession ? (
+              <div className="space-y-1 text-sm text-gray-600">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-gray-800">{displaySession.title || 'Untitled Session'}</span>
+                  {!displaySession.endTime && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p><span className="font-medium text-gray-700">Type:</span> {toTitleCase(displaySession.type || 'Session')}</p>
+                {sessionProjectName && (
+                  <p><span className="font-medium text-gray-700">Project:</span> {sessionProjectName}</p>
+                )}
+                <p><span className="font-medium text-gray-700">Start:</span> {displaySession.startTime ? formatDate(displaySession.startTime) : 'Not recorded'}</p>
+                <p><span className="font-medium text-gray-700">End:</span> {displaySession.endTime ? formatDate(displaySession.endTime) : 'In progress'}</p>
+                <p><span className="font-medium text-gray-700">Participants:</span> {participantNames.length > 0 ? participantNames.join(', ') : 'Not specified'}</p>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">No session is currently associated with this item.</p>
+            )}
+          </div>
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={handleRemove}
+              className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+            >
+              Remove Session
+            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Apply
               </button>
             </div>
           </div>

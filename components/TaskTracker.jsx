@@ -1638,26 +1638,20 @@ Rules:
     const ids = Array.isArray(noteIds) ? noteIds.filter(Boolean) : [];
     if (ids.length === 0) return;
     const snapshot = captureUndoSnapshot();
-    let removedIds = new Set();
-    setData(prev => {
-      const result = removeNotesAndComments(ids, prev.notes, prev.comments);
-      removedIds = result.removedIds;
-      if (removedIds.size === 0) {
-        return prev;
-      }
-      return {
-        ...prev,
-        notes: result.remainingNotes,
-        comments: result.remainingComments
-      };
-    });
-    if (!removedIds || removedIds.size === 0) return;
+    const result = removeNotesAndComments(ids, data.notes, data.comments);
+    if (!result.removedIds || result.removedIds.size === 0) return;
+
+    setData(prev => ({
+      ...prev,
+      notes: result.remainingNotes,
+      comments: result.remainingComments
+    }));
     setSelectedNoteIds(prev => {
       const next = new Set(prev);
-      removedIds.forEach(id => next.delete(id));
+      result.removedIds.forEach(id => next.delete(id));
       return next;
     });
-    if (projectPickerState.noteId && removedIds.has(projectPickerState.noteId)) {
+    if (projectPickerState.noteId && result.removedIds.has(projectPickerState.noteId)) {
       setProjectPickerState({ noteId: null, query: '' });
     }
     registerUndo(description, snapshot);

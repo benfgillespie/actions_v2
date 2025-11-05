@@ -1528,76 +1528,6 @@ Rules:
     }));
   };
 
-  const promptEditNoteContent = useCallback((note) => {
-    if (!note || typeof window === 'undefined') return;
-    const activeSelection = window.getSelection();
-    if (activeSelection && activeSelection.toString()) return;
-    const currentContent = note.content || '';
-    const updatedContent = window.prompt('Update item text', currentContent);
-    if (updatedContent === null || updatedContent === currentContent) return;
-    const trimmedContent = updatedContent.trim();
-    if (!trimmedContent) return;
-    const snapshot = captureUndoSnapshot();
-    setData(prev => ({
-      ...prev,
-      notes: prev.notes.map(n => n.id === note.id
-        ? { ...n, content: trimmedContent, updatedAt: Date.now() }
-        : n)
-    }));
-    registerUndo('Update item text', snapshot);
-  }, [captureUndoSnapshot, registerUndo]);
-
-  const promptEditCommentContent = useCallback((comment) => {
-    if (!comment || typeof window === 'undefined') return;
-    const activeSelection = window.getSelection();
-    if (activeSelection && activeSelection.toString()) return;
-    const currentContent = comment.content || '';
-    const updatedContent = window.prompt('Update comment text', currentContent);
-    if (updatedContent === null || updatedContent === currentContent) return;
-    const trimmedContent = updatedContent.trim();
-    if (!trimmedContent) return;
-    const snapshot = captureUndoSnapshot();
-    setData(prev => ({
-      ...prev,
-      comments: prev.comments.map(existing =>
-        existing.id === comment.id
-          ? { ...existing, content: trimmedContent, updatedAt: Date.now() }
-          : existing
-      )
-    }));
-    registerUndo('Update comment text', snapshot);
-  }, [captureUndoSnapshot, registerUndo]);
-
-  const promptEditNoteDueDate = useCallback((note) => {
-    if (!note || typeof window === 'undefined') return;
-    const currentValue = note.dueDate
-      ? new Date(note.dueDate).toISOString().slice(0, 10)
-      : '';
-    const nextValue = window.prompt('Set due date (YYYY-MM-DD)', currentValue);
-    if (nextValue === null) return;
-    const trimmed = nextValue.trim();
-    let nextTimestamp = null;
-    if (trimmed) {
-      const parsed = Date.parse(trimmed);
-      if (Number.isNaN(parsed)) {
-        window.alert('Please enter a valid date in the format YYYY-MM-DD.');
-        return;
-      }
-      const parsedDate = new Date(parsed);
-      parsedDate.setHours(0, 0, 0, 0);
-      nextTimestamp = parsedDate.getTime();
-    }
-    if ((note.dueDate || null) === (nextTimestamp || null)) return;
-    const snapshot = captureUndoSnapshot();
-    setData(prev => ({
-      ...prev,
-      notes: prev.notes.map(n => n.id === note.id
-        ? { ...n, dueDate: nextTimestamp, updatedAt: Date.now() }
-        : n)
-    }));
-    registerUndo('Update due date', snapshot);
-  }, [captureUndoSnapshot, registerUndo]);
-
   const addProjectToNote = (noteId, projectId) => {
     if (!projectId) return;
     setData(prev => ({
@@ -1754,6 +1684,76 @@ Rules:
   const registerUndo = useCallback((label, snapshot) => {
     setLastUndo({ label, snapshot });
   }, []);
+
+  const promptEditNoteContent = useCallback((note) => {
+    if (!note || typeof window === 'undefined') return;
+    const activeSelection = window.getSelection();
+    if (activeSelection && activeSelection.toString()) return;
+    const currentContent = note.content || '';
+    const updatedContent = window.prompt('Update item text', currentContent);
+    if (updatedContent === null || updatedContent === currentContent) return;
+    const trimmedContent = updatedContent.trim();
+    if (!trimmedContent) return;
+    const snapshot = captureUndoSnapshot();
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(n => n.id === note.id
+        ? { ...n, content: trimmedContent, updatedAt: Date.now() }
+        : n)
+    }));
+    registerUndo('Update item text', snapshot);
+  }, [captureUndoSnapshot, registerUndo]);
+
+  const promptEditCommentContent = useCallback((comment) => {
+    if (!comment || typeof window === 'undefined') return;
+    const activeSelection = window.getSelection();
+    if (activeSelection && activeSelection.toString()) return;
+    const currentContent = comment.content || '';
+    const updatedContent = window.prompt('Update comment text', currentContent);
+    if (updatedContent === null || updatedContent === currentContent) return;
+    const trimmedContent = updatedContent.trim();
+    if (!trimmedContent) return;
+    const snapshot = captureUndoSnapshot();
+    setData(prev => ({
+      ...prev,
+      comments: prev.comments.map(existing =>
+        existing.id === comment.id
+          ? { ...existing, content: trimmedContent, updatedAt: Date.now() }
+          : existing
+      )
+    }));
+    registerUndo('Update comment text', snapshot);
+  }, [captureUndoSnapshot, registerUndo]);
+
+  const promptEditNoteDueDate = useCallback((note) => {
+    if (!note || typeof window === 'undefined') return;
+    const currentValue = note.dueDate
+      ? new Date(note.dueDate).toISOString().slice(0, 10)
+      : '';
+    const nextValue = window.prompt('Set due date (YYYY-MM-DD)', currentValue);
+    if (nextValue === null) return;
+    const trimmed = nextValue.trim();
+    let nextTimestamp = null;
+    if (trimmed) {
+      const parsed = Date.parse(trimmed);
+      if (Number.isNaN(parsed)) {
+        window.alert('Please enter a valid date in the format YYYY-MM-DD.');
+        return;
+      }
+      const parsedDate = new Date(parsed);
+      parsedDate.setHours(0, 0, 0, 0);
+      nextTimestamp = parsedDate.getTime();
+    }
+    if ((note.dueDate || null) === (nextTimestamp || null)) return;
+    const snapshot = captureUndoSnapshot();
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.map(n => n.id === note.id
+        ? { ...n, dueDate: nextTimestamp, updatedAt: Date.now() }
+        : n)
+    }));
+    registerUndo('Update due date', snapshot);
+  }, [captureUndoSnapshot, registerUndo]);
 
   const applySnapshot = useCallback((snapshotData, selectedIds = []) => {
     setData(snapshotData);
